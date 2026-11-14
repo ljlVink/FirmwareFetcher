@@ -6,16 +6,51 @@ use super::neon::{SqlQuery, SqlResult};
 use super::Repository;
 
 const LIST_SQL: &str = r#"
-WITH filtered AS (
+WITH devices AS (
+    SELECT brand, dev, code, split_part(code, '-', 1) AS family,
+           substring(code FROM '^[A-Z0-9]{3,}-([A-Z]+)[0-9]') AS letters,
+           substring(code FROM '^[A-Z0-9]{3,}-[A-Z]+([0-9]{1,6})')::int AS digits
+    FROM (SELECT DISTINCT brand, dev, upper(dev) AS code FROM firmware_submissions) d
+), models AS (
+    SELECT model_name, brand, source_file = brand || '_cn' AS cn, code, split_part(code, '-', 1) AS family,
+           substring(code FROM '^[A-Z0-9]{3,}-([A-Z]+)[0-9]') AS letters,
+           substring(code FROM '^[A-Z0-9]{3,}-[A-Z]+([0-9]{1,6})')::int AS digits
+    FROM (SELECT model_name, source_file, split_part(source_file, '_', 1) AS brand,
+                 upper(regexp_replace(model, '^.*\s', '')) AS code
+          FROM device_models
+          WHERE starts_with(source_file, 'huawei_') OR starts_with(source_file, 'honor_')) m
+),
+-- 机型名候选取最优一档：精确（可跨品牌，同品牌优先）> 提交型号多一位 > 机型表多一位 > CN 尾缀 > 同前缀系列；
+-- 非精确档只用同品牌；系列内比网络字母（全同 > 首字母同 > 其他）和数字距离，最后中国来源优先，并列名称用 " / " 连接。
+candidates AS (
+    SELECT d.brand, d.dev, m.model_name,
+           rank() OVER (PARTITION BY d.brand, d.dev ORDER BY
+               t.tier, m.brand <> d.brand,
+               CASE WHEN t.tier < 4 OR m.letters = d.letters THEN 0
+                    WHEN left(m.letters, 1) = left(d.letters, 1) THEN 1 ELSE 2 END,
+               CASE WHEN t.tier < 4 THEN 0 ELSE abs(m.digits - d.digits) END,
+               NOT m.cn) AS position
+    FROM devices d
+    JOIN models m ON m.family = d.family
+    CROSS JOIN LATERAL (SELECT CASE
+        WHEN m.code = d.code THEN 0
+        WHEN length(d.code) = length(m.code) + 1 AND starts_with(d.code, m.code) THEN 1
+        WHEN length(m.code) = length(d.code) + 1 AND starts_with(m.code, d.code) THEN 2
+        WHEN d.code = m.code || 'CN' THEN 3
+        ELSE 4 END AS tier) t
+    WHERE t.tier = 0 OR (m.brand = d.brand AND (t.tier < 4 OR (d.letters IS NOT NULL AND m.letters IS NOT NULL)))
+), names AS (
+    SELECT brand, dev, string_agg(DISTINCT model_name, ' / ' ORDER BY model_name) AS model_name
+    FROM candidates WHERE position = 1
+    GROUP BY brand, dev
+), filtered AS (
     SELECT s.id
     FROM firmware_submissions s
     WHERE ($1 = '' OR s.dev ILIKE $1 OR s.vendor ILIKE $1 OR s.target_bl_version_number ILIKE $1
         OR EXISTS (SELECT 1 FROM firmware_packages p
                    WHERE p.submission_id = s.id AND p.version_number ILIKE $1)
-        OR EXISTS (SELECT 1 FROM device_models dm
-                   WHERE (dm.model = s.dev OR s.dev LIKE dm.model || '_' OR s.dev = dm.model || 'CN')
-                     AND starts_with(dm.source_file, s.brand || '_')
-                     AND dm.model_name ILIKE $1))
+        OR EXISTS (SELECT 1 FROM names n
+                   WHERE n.brand = s.brand AND n.dev = s.dev AND n.model_name ILIKE $1))
       AND CASE WHEN $2 = '' THEN ($5 = '1' OR s.upgrade_or_erec <> 'emulater')
                ELSE s.upgrade_or_erec = $2 END
 ), page AS (
@@ -36,36 +71,14 @@ SELECT jsonb_build_object(
 )::text
 FROM (
     SELECT s.id, s.created_at, s.dev, s.brand, s.vendor, s.upgrade_or_erec, s.target_bl_version_number,
-           dm.model_name,
+           n.model_name,
            jsonb_agg(jsonb_build_object('versionNumber', p.version_number, 'url', p.url)
                      ORDER BY p.position) AS packages
     FROM firmware_submissions s
     JOIN firmware_packages p ON p.submission_id = s.id
-    -- 同品牌机型名：中国来源优先；先精确匹配，再单字符变体，最后回退 CN 地区尾缀。
-    LEFT JOIN LATERAL (
-        SELECT coalesce(
-            (SELECT string_agg(DISTINCT cn.model_name, ' / ' ORDER BY cn.model_name)
-               FROM device_models cn
-               WHERE cn.model = s.dev AND cn.source_file = s.brand || '_cn'),
-            (SELECT string_agg(DISTINCT a.model_name, ' / ' ORDER BY a.model_name)
-               FROM device_models a
-               WHERE a.model = s.dev AND starts_with(a.source_file, s.brand || '_')),
-            (SELECT string_agg(DISTINCT c2.model_name, ' / ' ORDER BY c2.model_name)
-               FROM device_models c2
-               WHERE s.dev LIKE c2.model || '_' AND c2.source_file = s.brand || '_cn'),
-            (SELECT string_agg(DISTINCT a2.model_name, ' / ' ORDER BY a2.model_name)
-               FROM device_models a2
-               WHERE s.dev LIKE a2.model || '_' AND starts_with(a2.source_file, s.brand || '_')),
-            (SELECT string_agg(DISTINCT c3.model_name, ' / ' ORDER BY c3.model_name)
-               FROM device_models c3
-               WHERE s.dev = c3.model || 'CN' AND c3.source_file = s.brand || '_cn'),
-            (SELECT string_agg(DISTINCT a3.model_name, ' / ' ORDER BY a3.model_name)
-               FROM device_models a3
-               WHERE s.dev = a3.model || 'CN' AND starts_with(a3.source_file, s.brand || '_'))
-        ) AS model_name
-    ) dm ON true
+    LEFT JOIN names n ON n.brand = s.brand AND n.dev = s.dev
     WHERE s.id IN (SELECT id FROM page)
-    GROUP BY s.id, dm.model_name
+    GROUP BY s.id, n.model_name
     ORDER BY s.id DESC
 ) s
 "#;
