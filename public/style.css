@@ -125,21 +125,20 @@ button:disabled:hover { transform: none; }
 .skip-link { position: absolute; top: -60px; left: 24px; padding: 10px 18px; background: var(--input); z-index: 10; }
 .skip-link:focus { top: 12px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 24px; }
-.brand { display: flex; align-items: center; gap: 12px; color: var(--text); font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
+.site-header { display: flex; align-items: center; gap: 24px; padding-block: 24px; }
+.brand { display: flex; align-items: center; gap: 12px; margin-right: auto; color: var(--text); font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
 .site-header nav { display: flex; gap: 24px; align-items: center; }
-.site-header nav a { color: var(--link); font-size: 13px; white-space: nowrap; }
-.theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--input-border); border-radius: 9px; background: var(--input); color: var(--text); }
-.theme-toggle:hover { background: var(--btn-hover); }
-.theme-toggle svg { width: 17px; height: 17px; }
-.site-header nav .icon-link { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; color: var(--text); }
-.site-header nav .icon-link:hover { color: var(--link); }
-.icon-link svg { width: 20px; height: 20px; }
-.lang-select { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--input-border); border-radius: 9px; background: var(--input); color: var(--text); }
-.lang-select:hover { background: var(--btn-hover); }
-.lang-select:focus-within { outline: 3px solid var(--accent-strong); outline-offset: 4px; }
-.lang-select svg { width: 18px; height: 18px; pointer-events: none; }
-.lang-select select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; opacity: 0; cursor: pointer; }
+.site-header .header-link { color: var(--link); font-size: 13px; white-space: nowrap; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.icon-button { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--input-border); border-radius: 9px; background: var(--input); color: var(--text); }
+.icon-button:hover { background: var(--btn-hover); color: var(--link); text-decoration: none; }
+.icon-button svg { width: 18px; height: 18px; }
+.lang-select { position: relative; flex: none; display: inline-flex; align-items: center; color: var(--text); }
+.lang-select svg { position: absolute; left: 11px; width: 16px; height: 16px; pointer-events: none; }
+.lang-select select { width: auto; padding-left: 34px; }
+.lang-select select, .brand-select select { height: 36px; padding-block: 0; border-radius: 9px; font-size: 12px; cursor: pointer; }
+.lang-select select:hover, .brand-select select:hover { background-color: var(--btn-hover); }
+option { background: var(--input); color: var(--text); }
 .icon-moon { display: none; }
 [data-theme="light"] .icon-sun { display: none; }
 [data-theme="light"] .icon-moon { display: block; }
@@ -244,7 +243,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .shell { width: calc(100% - 32px); }
   .site-header { padding-block: 18px; gap: 12px; flex-wrap: wrap; }
   .brand { font-size: 15px; gap: 9px; }
-  .site-header nav { gap: 12px; margin-left: auto; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; }
+  .site-header nav { gap: 16px; }
+  .header-actions { flex-basis: 100%; justify-content: flex-end; }
   .page-heading { padding-block: 26px 20px; }
   .header-note { display: none; }
   .section-heading { padding: 18px; }
@@ -290,4 +290,3 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .parse-field input.parse-ok { border-color: var(--ok-border); background: var(--ok-soft); }
 .parse-field input.parse-bad { border-color: var(--danger); background: var(--danger-soft); }
 .brand-select { width: 100px; flex: none; }
-.brand-select select { padding-block: 7px; font-size: 12px; }
