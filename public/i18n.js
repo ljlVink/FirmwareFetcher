@@ -12,7 +12,7 @@ const MESSAGES = {
   en: {
     skipLink: "Skip to firmware records",
     siteNav: "Site navigation",
-    haucet: "Unpack with Haucet",
+    haucet: "Haucet",
     language: "Language",
     themeToggleTitle: "Toggle dark / light",
     themeToggleLabel: "Toggle dark mode",
@@ -80,7 +80,7 @@ const MESSAGES = {
   zh: {
     skipLink: "跳转到固件记录",
     siteNav: "站点导航",
-    haucet: "使用 Haucet 解包",
+    haucet: "Haucet",
     language: "语言",
     themeToggleTitle: "切换深色 / 浅色",
     themeToggleLabel: "切换深色模式",
@@ -148,7 +148,7 @@ const MESSAGES = {
   ru: {
     skipLink: "Перейти к записям прошивок",
     siteNav: "Навигация по сайту",
-    haucet: "Распаковать с Haucet",
+    haucet: "Haucet",
     language: "Язык",
     themeToggleTitle: "Тёмная / светлая тема",
     themeToggleLabel: "Переключить тёмную тему",
