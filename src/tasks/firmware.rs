@@ -8,7 +8,7 @@ use crate::domain::{CheckedFirmware, FirmwareInput, RefreshSeed, UpdateAction, V
 use crate::service::{self, SaveError};
 use crate::{firmware, notifications, storage::Repository};
 
-pub const CRON: &str = "0 17 * * *";
+pub const CRON: &str = "0 16 * * *";
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
