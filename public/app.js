@@ -33,7 +33,7 @@ const brandPlaceholders = {
 };
 let selectedBrand = "huawei";
 let activeSubmissions = 0;
-const AUTO_PARSE_RE = /^([A-Z0-9]+)-([A-Z0-9]+)-(LGRP\d+)\s+(\d+(?:\.\d+){2,3})\((?:SP(\d+))?C(\d+)E(\d+)R(\d+)P(\d+)(?:PATCH(\d+))?\)$/;
+const AUTO_PARSE_RE = /^([A-Z0-9]+)-([A-Z0-9]+)-(LGRP\d+)\s+(\d+(?:\.\d+){2,3})\((?:SP(\d+))?([A-Z]*C\d+)E(\d+)R(\d+)P(\d+)(?:PATCH(\d+))?\)$/;
 const ACTION_LABEL_KEY = { upgrade: "upgrade", recovery: "recovery" };
 const EMULATER_LABEL_KEY = { arm64: "emulatorArm64", x86: "emulatorX86" };
 const $themeToggle = document.getElementById("theme-toggle");
@@ -345,13 +345,13 @@ $autoParse.addEventListener("input", () => {
     return;
   }
   // P 位 = PRELOAD 版本末位，R 位只进括号（真机证据：TAS 104.2.0.136(C00E136R7P4) → PRELOAD 104.0.0.4(C00R7)）。
-  const [, series, model, lgrp, version, sp, custC, custE, preloadR, preloadP, patch] = match;
+  const [, series, model, lgrp, version, sp, region, custE, preloadR, preloadP, patch] = match;
   const prefix = version.split(".").slice(0, -1).join(".");
   document.getElementById("dev").value = `${series}-${model}`;
   document.getElementById("base").value = `${series}-${lgrp}-CHN ${version}${sp ? `(SP${sp})` : ""}`;
   if (patch !== undefined) $patch.value = `patch${patch}`;
-  document.getElementById("cust").value = `${series}-${model}-CUST ${prefix}.${custE}(C${custC})`;
-  document.getElementById("preload").value = `${series}-${model}-PRELOAD ${prefix}.${preloadP}(C${custC}R${preloadR})`;
+  document.getElementById("cust").value = `${series}-${model}-CUST ${prefix}.${custE}(${region})`;
+  document.getElementById("preload").value = `${series}-${model}-PRELOAD ${prefix}.${preloadP}(${region}R${preloadR})`;
 
   $autoParse.classList.add("parse-ok");
 });
