@@ -1,0 +1,30 @@
+name = "firmwarefetcher"
+main = "build/index.js"
+compatibility_date = "2026-09-01"
+routes = [{ pattern = "firmwarefetcher.ljlvink.top/*", zone_name = "ljlvink.top" }]
+keep_vars = true
+
+[triggers]
+crons = ["0 17 * * *", "0 0 * * *"]
+
+[dev]
+port = 18787
+
+[assets]
+directory = "./public"
+
+[build]
+command = "worker-build --release"
+
+[observability]
+enabled = true
+
+[[queues.producers]]
+binding = "OTA_REFRESH"
+queue = "firmwarefetcher-ota-refresh"
+
+[[queues.consumers]]
+queue = "firmwarefetcher-ota-refresh"
+max_batch_size = 1
+max_batch_timeout = 1
+max_concurrency = 1

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#000000">
+  <title>FirmwareFetcher</title>
+  <script>
+    (function () {
+      var theme = "dark";
+      try { theme = localStorage.getItem("theme") || "dark"; } catch (e) {}
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/i18n.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#records-panel" data-i18n="skipLink">Skip to firmware records</a>
+  <header class="site-header shell">
+    <span class="brand">FirmwareFetcher</span>
+    <nav aria-label="Site navigation" data-i18n-aria-label="siteNav">
+      <a class="header-link" href="https://github.com/ljlVink/haucet/releases" target="_blank" rel="noopener noreferrer" data-i18n="haucet">Unpack with Haucet</a>
+      <a class="header-link" href="https://github.com/ljlVink/Pedal" target="_blank" rel="noopener noreferrer">Pedal(Beta)</a>
+      <a class="header-link" href="https://t.me/firmwarefetcher" target="_blank" rel="noopener noreferrer">Telegram</a>
+      <label class="lang-select" for="lang-select">
+        <span class="visually-hidden" data-i18n="language">Language</span>
+        <select id="lang-select" autocomplete="off">
+          <option value="en" lang="en">English</option>
+          <option value="zh" lang="zh-CN">中文</option>
+          <option value="ru" lang="ru">Русский</option>
+        </select>
+      </label>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="true" title="Toggle dark / light" data-i18n-title="themeToggleTitle">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>
+        <span class="visually-hidden" data-i18n="themeToggleLabel">Toggle dark mode</span>
+      </button>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <section class="panel submission-panel" id="submit-panel" aria-labelledby="submit-title">
+      <div class="section-heading">
+        <div>
+          <h2 id="submit-title" data-i18n="submitTitle">Submit a new version</h2>
+        </div>
+        <label class="brand-select" for="brand">
+          <span class="visually-hidden" data-i18n="brandLabel">Firmware brand</span>
+          <select id="brand" name="brand" form="submit-form" autocomplete="off">
+            <option value="huawei" selected data-i18n="huawei">Huawei</option>
+            <option value="honor" data-i18n="honor">Honor</option>
+          </select>
+        </label>
+      </div>
+      <details class="submission-method" id="version-method" open>
+        <summary data-i18n="byVersion">Submit by version</summary>
+        <form id="submit-form" class="submission-form">
+          <div class="form-grid">
+            <label class="field parse-field" for="auto-parse">
+              <input id="auto-parse" type="text" placeholder="HOP-AL10-LGRP3 207.0.0.109(SP6C00E105R4P4patch00)" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field" for="dev"><span data-i18n="deviceModel">Device model</span>
+              <input id="dev" type="text" name="dev" required maxlength="64" placeholder="HOP-AL10" spellcheck="false" autocomplete="off">
+            </label>
+            <label class="field" for="patch"><span data-i18n="patchVersion">Patch version</span>
+              <span class="patch-row">
+                <input id="patch" type="text" name="patch" value="patch00" maxlength="32" placeholder="patch00" spellcheck="false" autocomplete="off">
+                <input id="patch-enabled" type="checkbox" checked aria-label="Include patch version" title="Checked: include the patch version; unchecked: query without patch" data-i18n-aria-label="patchEnabledLabel" data-i18n-title="patchEnabledTitle">
+              </span>
+            </label>
+            <label class="field" for="vendor"><span data-i18n="vendor">Channel / region</span>
+              <input id="vendor" type="text" name="vendor" value="all_cn" maxlength="32" placeholder="all_cn" spellcheck="false" autocomplete="off">
+            </label>
+            <label class="field" for="base"><span data-i18n="baseVersion">Base system version</span>
+              <input id="base" type="text" name="base" required maxlength="160" placeholder="HOP-LGRP3-CHN 207.0.0.109(SP6)" spellcheck="false" autocomplete="off">
+            </label>
+            <label class="field" for="cust"><span data-i18n="custVersion">CUST version</span>
+              <input id="cust" type="text" name="cust" required maxlength="160" placeholder="HOP-AL10-CUST 207.0.0.105(C00)" spellcheck="false" autocomplete="off">
+            </label>
+            <label class="field" for="preload"><span data-i18n="preloadVersion">PRELOAD version</span>
+              <input id="preload" type="text" name="preload" required maxlength="160" placeholder="HOP-AL10-PRELOAD 207.0.0.4(C00R4)" spellcheck="false" autocomplete="off">
+            </label>
+          </div>
+          <div class="form-footer">
+            <fieldset class="package-choice">
+              <legend data-i18n="packageType">Package type</legend>
+              <div class="segmented-control">
+                <label class="choice"><input type="radio" name="upgrade_or_erec" value="upgrade" required><span data-i18n="upgrade">Incremental</span></label>
+                <label class="choice"><input type="radio" name="upgrade_or_erec" value="recovery" checked><span data-i18n="recovery">Full</span></label>
+              </div>
+            </fieldset>
+            <div class="submit-action">
+              <button class="button button-primary" type="submit" id="submit-btn" data-i18n="submit">Submit</button>
+            </div>
+          </div>
+        </form>
+      </details>
+      <details class="submission-method" id="manual-method">
+        <summary data-i18n="manualTitle">Submit three packages manually</summary>
+        <form id="manual-submit-form" class="submission-form manual-form">
+          <label class="field" for="manual-urls">
+            <span data-i18n="manualUrls">Firmware package URLs (one per line)</span>
+            <textarea id="manual-urls" name="urls" rows="6" required placeholder="Paste one full ZIP URL per line" data-i18n-placeholder="manualPlaceholder" autocomplete="off" spellcheck="false"></textarea>
+          </label>
+          <div class="form-footer">
+            <div class="submit-action">
+              <button class="button button-primary" type="submit" id="manual-submit-btn" data-i18n="submit">Submit</button>
+            </div>
+          </div>
+        </form>
+      </details>
+    </section>
+
+    <p id="msg" class="notice" role="status" aria-live="polite" hidden></p>
+
+    <section class="panel records-panel" id="records-panel" aria-labelledby="records-title">
+      <div class="section-heading">
+        <div class="records-heading">
+          <h2 id="records-title" data-i18n="recordsTitle">Firmware list</h2>
+          <span id="total-count" class="count-badge" aria-label="Saved records" data-i18n-aria-label="totalCountLabel">-</span>
+        </div>
+        <label class="emulator-toggle" for="show-emulators">
+          <input id="show-emulators" type="checkbox" autocomplete="off">
+          <span data-i18n="showEmulators">Show emulator packages</span>
+        </label>
+      </div>
+      <div class="filter-bar" role="search" aria-label="Filter firmware records" data-i18n-aria-label="filterLabel">
+        <label class="filter-field search-field" for="search">
+          <input id="search" type="search" aria-label="Search records" placeholder="Model, version, channel…" data-i18n-aria-label="searchLabel" data-i18n-placeholder="searchPlaceholder" autocomplete="off">
+        </label>
+        <label class="filter-field" for="action-filter">
+          <select id="action-filter" aria-label="Package type" data-i18n-aria-label="packageType"><option value="" data-i18n="allTypes">All types</option><option value="upgrade" data-i18n="upgrade">Incremental</option><option value="recovery" data-i18n="recovery">Full</option></select>
+        </label>
+      </div>
+      <div class="table-wrap" id="record-list" aria-busy="true">
+        <table class="records-table">
+          <thead><tr><th scope="col" data-i18n="colDevice">Device</th><th scope="col">VENDOR</th><th scope="col" data-i18n="colVersion">Firmware version</th><th scope="col" data-i18n="packageType">Package type</th><th scope="col" data-i18n="colDetails">Details</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="5" class="empty-state"><span class="loading-mark" aria-hidden="true"></span><span data-i18n="loading">Loading saved firmware…</span></td></tr></tbody>
+        </table>
+      </div>
+      <nav id="pagination" class="pagination" aria-label="Firmware record pages" data-i18n-aria-label="paginationLabel" hidden></nav>
+    </section>
+
+    <noscript><p class="notice notice-error">This page needs JavaScript to load firmware and submit versions. You can also use the <a href="/requests">JSON API</a> directly.</p></noscript>
+  </main>
+</body>
+</html>
