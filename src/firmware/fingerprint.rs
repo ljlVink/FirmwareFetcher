@@ -16,19 +16,31 @@ const MAX_XML_SIZE: usize = 1024 * 1024;
 const MAX_PACKAGES: usize = 32;
 const MAX_NODES: usize = 16_384;
 
-/// Only upstream XML file identities participate: never version labels or URLs.
-/// Package boundaries and repeated packages/entries are deliberately preserved.
+/// Huawei: only upstream XML file identities participate, never version labels or URLs.
+/// Honor: the CDN rejects Workers egress, so identity is the manifest URL path
+/// (scheme-insensitive). Package boundaries and repeated packages/entries are preserved.
 pub(crate) async fn content_key(
     brand: &str,
     packages: &[FirmwarePackage],
 ) -> Result<String, String> {
     let sources = sources(brand, packages)?;
+    if brand == "honor" {
+        return url_key(&sources);
+    }
     let mut identities = Vec::with_capacity(sources.len());
     for (url, selection) in sources {
         let xml = fetch_xml(&url).await?;
         identities.push(package_identity(&xml, selection.as_deref())?);
     }
-    combine(identities)
+    combine(identities, b"FirmwareFetcher XML content v1\0", "xml")
+}
+
+fn url_key(sources: &[(String, Option<String>)]) -> Result<String, String> {
+    let identities = sources.iter().map(|(url, _)| {
+        let url = Url::parse(url).map_err(|_| "Invalid firmware XML URL")?;
+        Ok(Sha256::digest(url.path().as_bytes()).into())
+    }).collect::<Result<Vec<[u8; 32]>, String>>()?;
+    combine(identities, b"FirmwareFetcher URL identity v1\0", "url")
 }
 
 fn sources(
@@ -390,16 +402,33 @@ pub(crate) fn package_identity(xml: &[u8], selection: Option<&str>) -> Result<[u
     Ok(digest.finalize().into())
 }
 
-fn combine(mut packages: Vec<[u8; 32]>) -> Result<String, String> {
+fn combine(mut packages: Vec<[u8; 32]>, domain: &[u8], prefix: &str) -> Result<String, String> {
     if packages.is_empty() {
         return Err("No firmware packages available for fingerprinting".into());
     }
     packages.sort_unstable();
     let mut digest = Sha256::new();
-    digest.update(b"FirmwareFetcher XML content v1\0");
+    digest.update(domain);
     for package in packages {
         digest.update((package.len() as u64).to_be_bytes());
         digest.update(package);
     }
-    Ok(format!("xml:v1:{:x}", digest.finalize()))
+    Ok(format!("{prefix}:v1:{:x}", digest.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_key;
+
+    #[test]
+    fn honor_url_key_ignores_scheme_and_order_but_not_path() {
+        let source = |url: &str| (url.to_owned(), None);
+        let a = "http://update.hihonorcdn.com/TDS/data/bl/files/v943171/f1/full/filelist.xml";
+        let b = "http://update.hihonorcdn.com/TDS/data/bl/files/v926410/f1/full/filelist.xml";
+        let key = url_key(&[source(a), source(b)]).unwrap();
+        assert!(key.starts_with("url:v1:") && key.len() == 7 + 64);
+        assert_eq!(key, url_key(&[source(&b.replacen("http:", "https:", 1)), source(a)]).unwrap());
+        assert_ne!(key, url_key(&[source(a), source(&b.replace("v926410", "v926411"))]).unwrap());
+        assert_ne!(key, url_key(&[source(a), source(b), source(b)]).unwrap());
+    }
 }
