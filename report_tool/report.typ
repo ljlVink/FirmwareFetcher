@@ -26,6 +26,15 @@
 }
 #let pages = if rows.len() == 0 { ((),) } else { rows.chunks(30) }
 
+#let coolapk-icon = image(bytes(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><image width='60' height='60' href='data:image/png;base64," +
+  "iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAMAAAANIilAAAAAV1BMVEUAAAARw3QNsmoMqWQOtGsOtGsMqGMRw3QOtWwNsWkMqWQRwnQOsmolwHtLyJFx06eN27ia4cGT4L1jzJ2w5s78/v3F7Ns0woPV8uUlunie38I5voRAv4Zy2uUWAAAAC3RSTlMAC0aLyuYCsyet6nEireAAAAJOSURBVEjH1ZfbuqMgDEapaFs1HDwUwdnv/5wjJ0WQdpe5mly0GlzJnwB+gpCzW4Xrpv9k0NS4uqGz3avHZ9JZ86juIftsof/CoH0GbN1/afWznD3oEtbTd9wXGdZdq6AMhmqb30dfaI8bqppSuKkQ7osNo7ocrlEX9yHXn9TVIe8EsL/aduDi+vgFQAEDNoEdCB86AocBNew9HgYI7qJr5/EjqI+lQSj+yAK2bDh8fZ/AEMKBYHAlhI1Ahx5zRSjjw8gZJRAoJWykQa0+ATplI9P8cibYslcM/PWSi8+fwNaWHdUmGXF+qm95+KRrWOCh8nU2QY1fmZhygdhQwsp5WGfpk+sUzN6sb2AiTLLJaCV0sPygYPGCaB428WdyCLENmBeuJegAs8rBJBlWVi7XA8z0bMrBk44fCdu6IMzkbUH1nyAZeNTPxEUtjDBXrUnNMvCcjhlcix599Gi6PKzEVTvtFEulhlEdYdLM17ARPVGhFwxPuvJetlk362JWgBxl3JZTw4ZYtLB1UnEsWZqdqiUt2EyuGnc4XAo7rJJF8mcONtO0b5opuzxXFe2T3UH9dhXqAlZuY5gxRddYpOKOZm+3JOer69B62gpOulQXcPoy4NE2sl04UqOLwfN75NR/I32+hDdlwQtQwYVp6WMGBviZ+Djy6QcypjhTWfgb+1/hrpzt/g2uy+Ea4XIYo6pYd1ehW1sKt9txoTT1llh/MhdWfLcf60Wt3j/1y9kSug6PN/irrnX4eT6Utb/Gu/Z8KLPHwbb7GKDr2uA4+BcX0q+/6S09qgAAAABJRU5ErkJggg=="
+  + "'/></svg>",
+), width: 12pt)
+#let github-icon = image(bytes(
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/></svg>",
+), width: 12pt)
+
 #set document(title: "HarmonyOS 固件更新日报", author: "FirmwareFetcher")
 #let side = calc.max(230, 230 + (calc.min(rows.len(), 30) - 26) * 6 + calc.max(0, data.system_summary.len() - 2) * 6) * 1mm
 #set page(
@@ -37,7 +46,16 @@
     columns: (1fr, 20mm),
     column-gutter: 5mm,
     align: (left + bottom, right + bottom),
-    text(size: 10pt, fill: muted)[以上信息来自互联网收集],
+    grid(
+      row-gutter: 5pt,
+      text(size: 10pt, fill: muted)[以上信息来自互联网收集],
+      grid(
+        columns: (auto, auto, auto),
+        column-gutter: 4pt,
+        align: horizon,
+        coolapk-icon, github-icon, text(size: 10pt, fill: ink)[ljlVink],
+      ),
+    ),
     image(bytes("<svg xmlns='http://www.w3.org/2000/svg' width='946' height='946'><image width='946' height='946' href='data:image/png;base64," + logo + "'/></svg>"), width: 20mm),
   ),
 )

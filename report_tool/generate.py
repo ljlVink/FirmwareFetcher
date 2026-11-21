@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent
 BEIJING = ZoneInfo("Asia/Shanghai")
 SYSTEMS = {"207": "鸿蒙 7", "206": "鸿蒙 6", "104": "鸿蒙 4"}
+PATCH_TARGET = re.compile(r"\S+ (\d+(?:\.\d+){2,3})\((SP\d+)?(patch\d+)\)")
+COMPONENT = re.compile(r"\S+ (\d+(?:\.\d+){2,3})(?:\(([A-Z0-9]*)\))?")
 
 def parse_date(value):
     try:
@@ -25,17 +27,30 @@ def parse_date(value):
     except ValueError:
         raise argparse.ArgumentTypeError("Date format should be YYYY-MM-DD") from None
 
+
+def parse_since(value):
+    for format_string in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(value, format_string)
+        except ValueError:
+            pass
+    raise argparse.ArgumentTypeError("Time format should be YYYY-MM-DD HH:MM[:SS] (Beijing time)")
+
 sqlcmd = '''
-WITH day_records AS (
+WITH selected_records AS (
     SELECT s.* FROM firmware_submissions s
-    WHERE s.created_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Shanghai')
-      AND s.created_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Shanghai')
+    WHERE (
+        ($2::timestamp IS NULL
+          AND s.created_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Shanghai')
+          AND s.created_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Shanghai'))
+        OR s.created_at > ($2::timestamp AT TIME ZONE 'Asia/Shanghai')
+    )
       AND s.upgrade_or_erec IN ('recovery', 'upgrade')
 ), details AS (
     SELECT s.id, s.brand, s.dev, dm.model_name, s.vendor, s.upgrade_or_erec,
-        s.target_bl_version_number,
+        s.target_bl_version_number, s.base, s.cust, s.preload,
         to_char(s.created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS') AS created_at_beijing
-    FROM day_records s LEFT JOIN LATERAL (
+    FROM selected_records s LEFT JOIN LATERAL (
         SELECT coalesce(
             (SELECT string_agg(DISTINCT cn.model_name, ' / ' ORDER BY cn.model_name)
                FROM device_models cn
@@ -59,7 +74,7 @@ WITH day_records AS (
     ) dm ON true
 )
 SELECT json_build_object(
-    'report_date', $1::text, 'timezone', 'Asia/Shanghai',
+    'report_date', $1::text, 'timezone', 'Asia/Shanghai', 'since_beijing', $2::text,
     'queried_at_beijing', to_char(now() AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI:SS'),
     'records', (SELECT coalesce(json_agg(row_to_json(d) ORDER BY d.id DESC), '[]'::json) FROM details d)
 )::text;
@@ -86,12 +101,12 @@ def require_env(name):
     return value
 
 
-def fetch_records(report_date):
+def fetch_records(report_date, since=None):
     request = urllib.request.Request(
         require_env("NEON_CONNECTION_ENDPOINT"),
         data=json.dumps({"queries": [
             {"query": "SELECT current_setting('transaction_read_only')", "params": []},
-            {"query": sqlcmd, "params": [report_date.isoformat()]},
+            {"query": sqlcmd, "params": [report_date.isoformat(), since.isoformat(sep=" ") if since else None]},
         ]}).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -116,9 +131,25 @@ def fetch_records(report_date):
         raise RuntimeError("Invalid data format returned by database") from None
 
 
+def full_version(record):
+    target = record["target_bl_version_number"]
+    patch_target = PATCH_TARGET.fullmatch(target)
+    base, cust, preload = (COMPONENT.fullmatch(record[key]) for key in ("base", "cust", "preload"))
+    if not (patch_target and base and cust and preload):
+        return target
+    number, sp, patch = patch_target.groups()
+    region = cust[2] or ""
+    revision = (preload[2] or "").removeprefix(region)
+    if (number, sp) != base.groups() or not re.fullmatch(r"[A-Z]*C\d+", region) or not re.fullmatch(r"R\d+", revision):
+        return target
+    return (f"{record['dev']} {number}({sp or ''}{region}E{cust[1].rsplit('.', 1)[1]}"
+            f"{revision}P{preload[1].rsplit('.', 1)[1]}{patch})")
+
+
 def summarize(data):
     records = data["records"]
     for record in records:
+        record["target_bl_version_number"] = full_version(record)
         record["display_model_name"] = (
             record["model_name"]
             or "未收录机型"
@@ -190,23 +221,29 @@ def generate(data, output, typst):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate daily firmware report")
-    parser.add_argument("--date", type=parse_date, default=datetime.now(BEIJING).date(), help="Beijing time date")
-    parser.add_argument("--output", type=Path, help="Output directory, default is reports/YYYY-MM-DD")
+    parser = argparse.ArgumentParser(description="Generate firmware report by date or since a Beijing timestamp")
+    period = parser.add_mutually_exclusive_group()
+    period.add_argument("--date", type=parse_date, help="Beijing time date, default is today")
+    period.add_argument("--since", type=parse_since, metavar='"YYYY-MM-DD HH:MM[:SS]"',
+                        help="Only records strictly after this Beijing time, including later dates")
+    parser.add_argument("--output", type=Path, help="Output directory, default is <script directory>/YYYY-MM-DD or since-YYYY-MM-DD_HH-MM-SS")
     args = parser.parse_args()
+    report_date = args.date or (args.since or datetime.now(BEIJING)).date()
     try:
         load_env(ROOT / ".env")
         typst = shutil.which("typst")
         if not typst:
             raise RuntimeError("Cannot find typst, please install the Typst command-line tool first")
-        data = summarize(fetch_records(args.date))
-        output = (args.output or ROOT / args.date.isoformat()).resolve()
+        data = summarize(fetch_records(report_date, args.since))
+        output_name = f"since-{args.since:%Y-%m-%d_%H-%M-%S}" if args.since else report_date.isoformat()
+        output = (args.output or ROOT / output_name).resolve()
         rows = generate(data, output, typst)
     except (OSError, ValueError, RuntimeError) as error:
         print(f"Failed to generate report: {error}", file=sys.stderr)
         return 1
     counts = data["counts"]
-    print(f"{args.date}: {counts['firmware_records']} sets, full {counts['full']} sets, delta {counts['delta']} sets, {counts['device_codes']} device models; details merged into {rows} rows.")
+    period_label = f"Since {args.since} (Beijing time)" if args.since else str(report_date)
+    print(f"{period_label}: {counts['firmware_records']} sets, full {counts['full']} sets, delta {counts['delta']} sets, {counts['device_codes']} device models; details merged into {rows} rows.")
     print(f"Query time: {data['queried_at_beijing']}")
     pages = max(1, (rows + 29) // 30)
     if pages == 1:
