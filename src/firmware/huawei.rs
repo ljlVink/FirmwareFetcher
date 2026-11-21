@@ -19,11 +19,10 @@ pub(crate) async fn version_check(
     if let Some(patch) = f.patch {
         rules.push(serde_json::json!({ "versionNumber": patch, "versionPackageType": "8" }));
     }
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "commonRules": {
             "boardID": "9465",
             "checkMode": "NORMAL",
-            "checkType": "1",
             "clientType": "HwOUC",
             "clientVersion": "e.2.0",
             "collAbility": "1",
@@ -68,7 +67,11 @@ pub(crate) async fn version_check(
         "keyAttestation": credentials.key_attestation,
         "ver": "2",
         "versionPackageRules": rules
-    }).to_string();
+    });
+    if endpoint == QueryEndpoint::OtaUpdate {
+        body["commonRules"]["checkType"] = "1".into();
+    }
+    let body = body.to_string();
     let headers = Headers::new();
     headers.set("Content-Type", "application/json; charset=UTF-8")?;
     headers.set("x-devModel", f.dev)?;
