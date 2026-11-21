@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum UpdateAction {
     Upgrade,
     Recovery,
+    Rollback,
 }
 
 impl UpdateAction {
@@ -14,6 +15,7 @@ impl UpdateAction {
         match self {
             Self::Upgrade => "upgrade",
             Self::Recovery => "recovery",
+            Self::Rollback => "rollback",
         }
     }
 }
@@ -25,6 +27,7 @@ impl FromStr for UpdateAction {
         match value {
             "upgrade" => Ok(Self::Upgrade),
             "recovery" => Ok(Self::Recovery),
+            "rollback" => Ok(Self::Rollback),
             _ => Err(()),
         }
     }

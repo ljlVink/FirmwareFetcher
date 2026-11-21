@@ -99,6 +99,7 @@
               <div class="segmented-control">
                 <label class="choice"><input type="radio" name="upgrade_or_erec" value="upgrade" required><span data-i18n="upgrade">Incremental</span></label>
                 <label class="choice"><input type="radio" name="upgrade_or_erec" value="recovery" checked><span data-i18n="recovery">Full</span></label>
+                <label class="choice"><input type="radio" name="upgrade_or_erec" value="rollback"><span data-i18n="rollback">Rollback (Beta)</span></label>
               </div>
             </fieldset>
             <div class="submit-action">
@@ -141,7 +142,7 @@
           <input id="search" type="search" aria-label="Search records" placeholder="Model, version, channel…" data-i18n-aria-label="searchLabel" data-i18n-placeholder="searchPlaceholder" autocomplete="off">
         </label>
         <label class="filter-field" for="action-filter">
-          <select id="action-filter" aria-label="Package type" data-i18n-aria-label="packageType"><option value="" data-i18n="allTypes">All types</option><option value="upgrade" data-i18n="upgrade">Incremental</option><option value="recovery" data-i18n="recovery">Full</option></select>
+          <select id="action-filter" aria-label="Package type" data-i18n-aria-label="packageType"><option value="" data-i18n="allTypes">All types</option><option value="upgrade" data-i18n="upgrade">Incremental</option><option value="recovery" data-i18n="recovery">Full</option><option value="rollback" data-i18n="rollback">Rollback (Beta)</option></select>
         </label>
       </div>
       <div class="table-wrap" id="record-list" aria-busy="true">

@@ -73,6 +73,7 @@ fn message(input: &FirmwareInput, target: &str) -> String {
     let kind = match input.upgrade_or_erec {
         UpdateAction::Upgrade => "Incremental package",
         UpdateAction::Recovery => "Full package",
+        UpdateAction::Rollback => "Rollback package",
     };
     format!(
         "New firmware added\nBrand: {brand}\nModel: {}\nChannel: {}\nVersion: {target}\nType: {kind}",

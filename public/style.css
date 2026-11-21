@@ -217,6 +217,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--btn-border); border-radius: 5px; font-size: 10px; line-height: 1.5; white-space: nowrap; }
 .badge-upgrade { background: var(--upgrade-soft); border-color: var(--upgrade-border); color: var(--upgrade-text); }
 .badge-recovery, .badge-emulater { background: var(--recovery-soft); border-color: var(--recovery-border); color: var(--recovery-text); }
+.badge-rollback { white-space: normal; }
 .target-version { color: var(--version-text); font-size: 12px; font-family: var(--font-mono); overflow-wrap: anywhere; }
 .package-list { display: grid; gap: 7px; margin: 12px 0 0; padding: 0; list-style: none; }
 .package-list li { font-size: 12px; overflow-wrap: anywhere; }
@@ -253,7 +254,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .form-grid { grid-template-columns: 1fr; gap: 14px; }
   .field input { font-size: 12px; }
   .form-footer { flex-direction: column; align-items: stretch; gap: 16px; }
-  .segmented-control { width: fit-content; }
+  .segmented-control { width: fit-content; max-width: 100%; flex-wrap: wrap; }
   .choice span { padding-inline: 12px; }
   .submit-action, .submit-action .button { width: 100%; }
   .filter-bar { padding: 16px 18px; grid-template-columns: 1fr; gap: 12px; }

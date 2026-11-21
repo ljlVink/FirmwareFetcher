@@ -12,7 +12,7 @@ BEGIN
 
     ALTER TABLE firmware_submissions
         ADD CONSTRAINT firmware_submissions_upgrade_or_erec_check
-        CHECK (upgrade_or_erec IN ('upgrade', 'recovery', 'emulater'));
+        CHECK (upgrade_or_erec IN ('upgrade', 'recovery', 'rollback', 'emulater'));
 
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint

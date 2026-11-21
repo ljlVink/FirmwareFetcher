@@ -65,7 +65,7 @@ fn validate(v: NewRequest) -> Result<FirmwareInput, String> {
         vendor: clean(v.vendor, "all_cn", 32, "vendor")?,
         upgrade_or_erec: match v.upgrade_or_erec.trim() {
             "emulater" => return Err("Emulator firmware can only be imported by administrators; submissions are not accepted".into()),
-            action => action.parse().map_err(|_| "Package type must be upgrade (incremental) or recovery (full)".to_owned())?,
+            action => action.parse().map_err(|_| "Package type must be upgrade (incremental), recovery (full) or rollback (beta)".to_owned())?,
         },
     })
 }

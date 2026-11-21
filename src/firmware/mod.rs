@@ -92,8 +92,9 @@ pub(crate) async fn query(env: &Env, input: &FirmwareInput) -> std::result::Resu
         let kind = match input.upgrade_or_erec {
             UpdateAction::Upgrade => "incremental package",
             UpdateAction::Recovery => "full package",
+            UpdateAction::Rollback => "rollback package",
         };
-        if input.brand == "huawei" && result.status == "1" {
+        if input.brand == "huawei" && result.status == "1" && input.upgrade_or_erec != UpdateAction::Rollback {
             return Err(failure(422,
                 "Huawei returned no available firmware (status=1): this package may still be in Huawei Club beta; try again in a few days, it becomes downloadable once officially released".into(),
             ));
