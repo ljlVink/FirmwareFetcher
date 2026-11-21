@@ -4,7 +4,7 @@ const $rows = document.getElementById("rows");
 const $msg = document.getElementById("msg");
 const $form = document.getElementById("submit-form");
 const $submitBtn = document.getElementById("submit-btn");
-const $erecoveryBtn = document.getElementById("erecovery-btn");
+const $erecoveryEnabled = document.getElementById("erecovery-enabled");
 const $manualForm = document.getElementById("manual-submit-form");
 const $manualSubmitBtn = document.getElementById("manual-submit-btn");
 const $manualUrls = document.getElementById("manual-urls");
@@ -270,13 +270,14 @@ function renderLoadError() {
   $rows.replaceChildren(row);
 }
 
-function bindSubmission(form, button, path, buildPayload, alternativeButton) {
+function bindSubmission(form, button, path, buildPayload) {
   let submitting = false;
-  async function submit(trigger) {
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
     if (submitting || !form.reportValidity()) return;
     let payload;
     try {
-      payload = buildPayload(trigger);
+      payload = buildPayload();
     } catch (error) {
       showMsg(() => errorText(error), true);
       return;
@@ -285,10 +286,8 @@ function bindSubmission(form, button, path, buildPayload, alternativeButton) {
     activeSubmissions += 1;
     $brand.disabled = true;
     button.disabled = true;
-    if (alternativeButton) alternativeButton.disabled = true;
-    const label = trigger.dataset.i18n;
-    trigger.dataset.i18n = "verifying";
-    trigger.textContent = t("verifying");
+    button.dataset.i18n = "verifying";
+    button.textContent = t("verifying");
     form.setAttribute("aria-busy", "true");
     const brand = payload.brand;
     showMsg(path === "/requests/manual"
@@ -311,26 +310,20 @@ function bindSubmission(form, button, path, buildPayload, alternativeButton) {
       activeSubmissions -= 1;
       $brand.disabled = activeSubmissions > 0;
       button.disabled = false;
-      if (alternativeButton) alternativeButton.disabled = false;
-      trigger.dataset.i18n = label;
-      trigger.textContent = t(label);
+      button.dataset.i18n = "submit";
+      button.textContent = t("submit");
       form.setAttribute("aria-busy", "false");
     }
-  }
-  form.addEventListener("submit", event => {
-    event.preventDefault();
-    submit(button);
   });
-  if (alternativeButton) alternativeButton.addEventListener("click", () => submit(alternativeButton));
 }
 
-bindSubmission($form, $submitBtn, "/requests", trigger => {
+bindSubmission($form, $submitBtn, "/requests", () => {
   const payload = Object.fromEntries(new FormData($form).entries());
   payload.brand = $brand.value;
   if (!$patchEnabled.checked) delete payload.patch;
-  if (trigger === $erecoveryBtn) payload.erecovery = true;
+  if (payload.brand === "huawei" && $erecoveryEnabled.checked) payload.erecovery = true;
   return payload;
-}, $erecoveryBtn);
+});
 
 bindSubmission($manualForm, $manualSubmitBtn, "/requests/manual", () => {
   const urls = $manualUrls.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -377,7 +370,7 @@ $brand.addEventListener("change", () => {
   $patchEnabled.checked = patchByBrand[selectedBrand];
   $patch.disabled = !$patchEnabled.checked;
   document.getElementById("manual-method").hidden = honor;
-  $erecoveryBtn.hidden = honor;
+  $erecoveryEnabled.closest("label").hidden = honor;
   document.getElementById("version-method").open = true;
   $msg.hidden = true;
 });

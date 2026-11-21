@@ -168,7 +168,7 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); opacity: 
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .patch-row { display: flex; align-items: center; gap: 8px; }
 .patch-row input[type="text"] { flex: 1; }
-.patch-row input[type="checkbox"], .emulator-toggle input { flex: none; width: 16px; height: 16px; padding: 0; accent-color: var(--accent-btn); cursor: pointer; }
+.patch-row input[type="checkbox"], .emulator-toggle input, .erecovery-option input { flex: none; width: 16px; height: 16px; padding: 0; accent-color: var(--accent-btn); cursor: pointer; }
 .patch-row input[type="text"]:disabled { opacity: .45; }
 .form-footer { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
 .manual-form .form-footer { justify-content: flex-end; padding-top: 0; border-top: 0; }
@@ -182,6 +182,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .choice input:checked + span { background: var(--accent-soft); border-color: var(--accent-soft-border); color: var(--link); }
 .choice input:focus-visible + span { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 .submit-action { display: flex; align-items: center; gap: 18px; }
+.erecovery-option { display: inline-flex; align-items: center; gap: 8px; color: var(--label-text); font-size: 12px; white-space: nowrap; cursor: pointer; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 16px; border-radius: 7px; border: 1px solid transparent; font-size: 12px; font-weight: 600; line-height: 1.5; white-space: nowrap; text-decoration: none; }
 .button:hover { text-decoration: none; }
 .button-primary { background: var(--accent-btn); color: var(--accent-btn-ink); border-color: var(--accent-btn); }
