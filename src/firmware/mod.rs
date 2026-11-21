@@ -8,6 +8,12 @@ mod huawei;
 pub(crate) mod manual;
 mod remote_zip;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryEndpoint {
+    OtaUpdate,
+    ERecovery,
+}
+
 pub(crate) struct DeviceCredentials {
     device_id: String,
     certificate: String,
@@ -48,7 +54,11 @@ fn filelist_url(raw: &str) -> Result<String> {
     Ok(url.into())
 }
 
-pub(crate) async fn query(env: &Env, input: &FirmwareInput) -> std::result::Result<CheckedFirmware, CheckFailure> {
+pub(crate) async fn query(
+    env: &Env,
+    input: &FirmwareInput,
+    endpoint: QueryEndpoint,
+) -> std::result::Result<CheckedFirmware, CheckFailure> {
     let failure = |status, message: String| CheckFailure { status, message };
     let fields = OtaFields {
         dev: &input.dev, base: &input.base, cust: &input.cust,
@@ -56,6 +66,9 @@ pub(crate) async fn query(env: &Env, input: &FirmwareInput) -> std::result::Resu
         update_action: input.upgrade_or_erec,
     };
     let honor = input.brand == "honor";
+    if honor && endpoint == QueryEndpoint::ERecovery {
+        return Err(failure(400, "eRecovery is only available for Huawei devices".into()));
+    }
     let brand_name = if honor { "Honor" } else { "Huawei" };
     let credentials = match DeviceCredentials::from_env(env, if honor { "HONOR" } else { "HUAWEI" }) {
         Ok(credentials) => credentials,
@@ -67,7 +80,7 @@ pub(crate) async fn query(env: &Env, input: &FirmwareInput) -> std::result::Resu
     let response = if honor {
         honor::version_check(&fields, &credentials).await
     } else {
-        huawei::version_check(&fields, &credentials).await
+        huawei::version_check(&fields, &credentials, endpoint).await
     };
     let (status, body) = match response {
         Ok(response) => response,
@@ -84,6 +97,9 @@ pub(crate) async fn query(env: &Env, input: &FirmwareInput) -> std::result::Resu
     let mut result: VersionCheckResult = match parsed {
         Ok(result) => result,
         Err(error) => {
+            if endpoint == QueryEndpoint::ERecovery {
+                return Err(failure(502, "Huawei eRecovery returned an unexpected format; record not saved".into()));
+            }
             let excerpt: String = body.chars().take(160).collect();
             return Err(failure(502, format!("{brand_name} server returned an unexpected format ({error}): {excerpt}")));
         }
@@ -94,7 +110,7 @@ pub(crate) async fn query(env: &Env, input: &FirmwareInput) -> std::result::Resu
             UpdateAction::Recovery => "full package",
             UpdateAction::Rollback => "rollback package",
         };
-        if input.brand == "huawei" && result.status == "1" && input.upgrade_or_erec != UpdateAction::Rollback {
+        if !honor && result.status == "1" && input.upgrade_or_erec != UpdateAction::Rollback {
             return Err(failure(422,
                 "Huawei returned no available firmware (status=1): this package may still be in Huawei Club beta; try again in a few days, it becomes downloadable once officially released".into(),
             ));

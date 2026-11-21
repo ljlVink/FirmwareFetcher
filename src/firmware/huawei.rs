@@ -1,11 +1,16 @@
 use worker::{Fetch, Headers, Method, Request, RequestInit, Result};
 
-use super::DeviceCredentials;
+use super::{DeviceCredentials, QueryEndpoint};
 use crate::domain::OtaFields;
 
-const HUAWEI_ENDPOINT: &str = "https://update-drcn.platform.hicloud.com/BL/v1/VersionCheck";
+const HUAWEI_OTAUPDATE_ENDPOINT: &str = "https://query.hicloud.com/BL/v1/VersionCheck";
+const HUAWEI_ERECOVERY_ENDPOINT: &str = "https://query.hicloud.com/BL/v1/CheckAndAuthorize";
 
-pub(crate) async fn version_check(f: &OtaFields<'_>, credentials: &DeviceCredentials) -> Result<(u16, String)> {
+pub(crate) async fn version_check(
+    f: &OtaFields<'_>,
+    credentials: &DeviceCredentials,
+    endpoint: QueryEndpoint,
+) -> Result<(u16, String)> {
     let mut rules = vec![
         serde_json::json!({ "versionNumber": f.base,    "versionPackageType": "2" }),
         serde_json::json!({ "versionNumber": f.cust,    "versionPackageType": "3" }),
@@ -47,6 +52,13 @@ pub(crate) async fn version_check(f: &OtaFields<'_>, credentials: &DeviceCredent
             },
             "authType": "1"
         },
+        "deviceToken": "-",
+        "updateToken": "-",
+        "cotaInfo": {
+            "country": "DEFAULT",
+            "vendorCota": "DEFAULT",
+            "vendorExpiredTime": "0"
+        },
         "deviceCertificate": credentials.certificate,
         "deviceInfo": {
             "deviceId": credentials.device_id,
@@ -54,6 +66,7 @@ pub(crate) async fn version_check(f: &OtaFields<'_>, credentials: &DeviceCredent
         },
         "extraInfo": "",
         "keyAttestation": credentials.key_attestation,
+        "ver": "2",
         "versionPackageRules": rules
     }).to_string();
     let headers = Headers::new();
@@ -66,7 +79,11 @@ pub(crate) async fn version_check(f: &OtaFields<'_>, credentials: &DeviceCredent
         "User-Agent",
         "Dalvik/2.1.0 (Linux; U; Android 12; TAS-AN00 Build/HUAWEITAS-AN00)",
     )?;
-    let request = Request::new_with_init(HUAWEI_ENDPOINT, &RequestInit {
+    let url = match endpoint {
+        QueryEndpoint::OtaUpdate => HUAWEI_OTAUPDATE_ENDPOINT,
+        QueryEndpoint::ERecovery => HUAWEI_ERECOVERY_ENDPOINT,
+    };
+    let request = Request::new_with_init(url, &RequestInit {
         method: Method::Post, headers,
         body: Some(wasm_bindgen::JsValue::from_str(&body)),
         ..Default::default()

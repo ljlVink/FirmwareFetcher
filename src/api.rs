@@ -5,7 +5,7 @@ use serde::Deserialize;
 use worker::*;
 
 use crate::domain::{FirmwareInput, FirmwarePackage, UpdateAction, PER_PAGE};
-use crate::firmware::{self, manual};
+use crate::firmware::{self, manual, QueryEndpoint};
 use crate::service::{self, SaveError};
 use crate::{notifications, storage::Repository};
 
@@ -19,6 +19,8 @@ struct NewRequest {
     patch: Option<String>,
     vendor: Option<String>,
     upgrade_or_erec: String,
+    #[serde(default)]
+    erecovery: bool,
 }
 
 fn check_text(s: String, max: usize, name: &str) -> Result<String, String> {
@@ -91,6 +93,11 @@ async fn parse_input(req: &mut Request) -> Result<NewRequest> {
         patch: field("patch"),
         vendor: field("vendor"),
         upgrade_or_erec: field("upgrade_or_erec").unwrap_or_default(),
+        erecovery: match field("erecovery").as_deref() {
+            Some("true") => true,
+            Some("false") | None => false,
+            _ => return Err(Error::RustError("erecovery must be true or false".into())),
+        },
     })
 }
 
@@ -110,11 +117,16 @@ async fn create(mut req: Request, ctx: RouteContext<Context>) -> Result<Response
         Ok(input) => input,
         Err(_) => return api_error("Invalid submission format", 400),
     };
+    let endpoint = if parsed.erecovery {
+        QueryEndpoint::ERecovery
+    } else {
+        QueryEndpoint::OtaUpdate
+    };
     let input = match validate(parsed) {
         Ok(input) => input,
         Err(message) => return api_error(&message, 400),
     };
-    let checked = match firmware::query(&ctx.env, &input).await {
+    let checked = match firmware::query(&ctx.env, &input, endpoint).await {
         Ok(checked) => checked,
         Err(failure) => return api_error(&failure.message, failure.status),
     };

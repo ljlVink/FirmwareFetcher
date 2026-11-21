@@ -242,7 +242,7 @@ async fn save(env: &Env, input: &FirmwareInput, firmware: &CheckedFirmware) -> R
 
 async fn process(job: &Job, env: &Env) -> Result<()> {
     let upgrade = job.input(UpdateAction::Upgrade);
-    let diff = match firmware::query(env, &upgrade).await {
+    let diff = match firmware::query(env, &upgrade, firmware::QueryEndpoint::OtaUpdate).await {
         Ok(result) => result,
         Err(failure) if failure.status == 422 => {
             console_log!("OTA refresh: no upgrade package for {}", job.dev);
@@ -266,7 +266,7 @@ async fn process(job: &Job, env: &Env) -> Result<()> {
     let recovery_job = Job { dev: job.dev.clone(), vendor: job.vendor.clone(),
         base: target.base, cust: target.cust, preload: target.preload };
     let recovery = recovery_job.input(UpdateAction::Recovery);
-    let full = match firmware::query(env, &recovery).await {
+    let full = match firmware::query(env, &recovery, firmware::QueryEndpoint::OtaUpdate).await {
         Ok(result) => result,
         Err(failure) if failure.status == 422 => {
             console_log!("OTA refresh: no recovery package for {}", job.dev);
