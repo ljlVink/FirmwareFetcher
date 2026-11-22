@@ -14,6 +14,7 @@ const $showEmulators = document.getElementById("show-emulators");
 const $totalCount = document.getElementById("total-count");
 const $recordList = document.getElementById("record-list");
 const $autoParse = document.getElementById("auto-parse");
+const $vendor = document.getElementById("vendor");
 const $patch = document.getElementById("patch");
 const $patchEnabled = document.getElementById("patch-enabled");
 const $brand = document.getElementById("brand");
@@ -34,7 +35,57 @@ const brandPlaceholders = {
 };
 let selectedBrand = "huawei";
 let activeSubmissions = 0;
+let vendorBeforeAutoParse = null;
 const AUTO_PARSE_RE = /^([A-Z0-9]+)-([A-Z0-9]+)-(LGRP\d+)\s+(\d+(?:\.\d+){2,3})\((?:SP(\d+))?([A-Z]*C\d+)E(\d+)R(\d+)P(\d+)(?:PATCH(\d+))?\)$/;
+const REGION_RULES = {
+  C00: { vendor: "all_cn", baseSuffix: "CHN" },
+  C01: { vendor: "cmcc_cn", baseSuffix: "CHN" },
+  C02: { vendor: "vodafone_es", baseSuffix: "OVS" },
+  C10: { vendor: "hw_ru", baseSuffix: "OVS" },
+  C16: { vendor: "mtn_za", baseSuffix: "OVS" },
+  C25: { vendor: "claro_la", baseSuffix: "OVS" },
+  C33: { vendor: "altice_all", baseSuffix: "OVS" },
+  C34: { vendor: "optus_au", baseSuffix: "OVS" },
+  C40: { vendor: "tef_normal", baseSuffix: "OVS" },
+  C45: { vendor: "tigo_la", baseSuffix: "OVS" },
+  C55: { vendor: "ti_it", baseSuffix: "OVS" },
+  C69: { vendor: "telcel_mx", baseSuffix: "OVS" },
+  C77: { vendor: "hw_la", baseSuffix: "OVS" },
+  C93: { vendor: "channel_th", baseSuffix: "OVS" },
+  C94: { vendor: "hw_tr", baseSuffix: "OVS" },
+  C106: { vendor: "ice_cr", baseSuffix: "OVS" },
+  C109: { vendor: "orange_all", baseSuffix: "OVS" },
+  C111: { vendor: "softbank_jp", baseSuffix: "OVS" },
+  C130: { vendor: "etcstore_th", baseSuffix: "OVS" },
+  C185: { vendor: "hw_meafnaf", baseSuffix: "OVS" },
+  C212: { vendor: "iusacell_mx", baseSuffix: "OVS" },
+  C301: { vendor: "channel_id", baseSuffix: "OVS" },
+  C316: { vendor: "vodacom_za", baseSuffix: "OVS" },
+  C346: { vendor: "vha_au", baseSuffix: "OVS" },
+  C431: { vendor: "hw_eea", baseSuffix: "OVS" },
+  C432: { vendor: "hw_eu", baseSuffix: "OVS" },
+  C451: { vendor: "telstra_au", baseSuffix: "OVS" },
+  C461: { vendor: "hw_cea", baseSuffix: "OVS" },
+  C521: { vendor: "telefonica_mx", baseSuffix: "OVS" },
+  C555: { vendor: "h3g_ie", baseSuffix: "OVS" },
+  C578: { vendor: "hw_ca", baseSuffix: "OVS" },
+  C605: { vendor: "hw_la", baseSuffix: "OVS" },
+  C635: { vendor: "hw_jp", baseSuffix: "OVS" },
+  C636: { vendor: "hw_spcseas", baseSuffix: "OVS" },
+  C675: { vendor: "hw_in", baseSuffix: "OVS" },
+  C700: { vendor: "all_cn", baseSuffix: "CHN" },
+  C721: { vendor: "porsche_normal", baseSuffix: "OVS" },
+  C735: { vendor: "demo_cn", baseSuffix: "CHN" },
+  DEMC735: { vendor: "demo_cn", baseSuffix: "CHN" },
+  C771: { vendor: "hw_la", baseSuffix: "OVS" },
+  C781: { vendor: "hw_eu", baseSuffix: "OVS" },
+  C782: { vendor: "hw_eu", baseSuffix: "OVS" },
+  C786: { vendor: "porsche_cn", baseSuffix: "CHN" },
+  C792: { vendor: "telus_ca_c792", baseSuffix: "OVS" },
+  C800: { vendor: "softbankcorp_jp", baseSuffix: "OVS" },
+  C828: { vendor: "porsche_ru", baseSuffix: "OVS" },
+  C900: { vendor: "hw_normal", baseSuffix: "OVS" },
+};
 const ACTION_LABEL_KEY = { upgrade: "upgrade", recovery: "recovery", rollback: "rollback" };
 const EMULATER_LABEL_KEY = { arm64: "emulatorArm64", x86: "emulatorX86" };
 const $themeToggle = document.getElementById("theme-toggle");
@@ -337,6 +388,9 @@ bindSubmission($manualForm, $manualSubmitBtn, "/requests/manual", () => {
 });
 
 
+$vendor.addEventListener("input", () => {
+  vendorBeforeAutoParse = null;
+});
 $autoParse.addEventListener("input", () => {
   const raw = $autoParse.value.trim().toUpperCase();
   $autoParse.classList.remove("parse-ok", "parse-bad");
@@ -348,9 +402,17 @@ $autoParse.addEventListener("input", () => {
   }
   // P 位 = PRELOAD 版本末位，R 位只进括号（真机证据：TAS 104.2.0.136(C00E136R7P4) → PRELOAD 104.0.0.4(C00R7)）。
   const [, series, model, lgrp, version, sp, region, custE, preloadR, preloadP, patch] = match;
+  const regionRule = REGION_RULES[region];
+  if (regionRule) {
+    vendorBeforeAutoParse ??= $vendor.value;
+    $vendor.value = regionRule.vendor;
+  } else if (vendorBeforeAutoParse !== null) {
+    $vendor.value = vendorBeforeAutoParse;
+    vendorBeforeAutoParse = null;
+  }
   const prefix = version.split(".").slice(0, -1).join(".");
   document.getElementById("dev").value = `${series}-${model}`;
-  document.getElementById("base").value = `${series}-${lgrp}-CHN ${version}${sp ? `(SP${sp})` : ""}`;
+  document.getElementById("base").value = `${series}-${lgrp}-${regionRule?.baseSuffix ?? "CHN"} ${version}${sp ? `(SP${sp})` : ""}`;
   if (patch !== undefined) $patch.value = `patch${patch}`;
   document.getElementById("cust").value = `${series}-${model}-CUST ${prefix}.${custE}(${region})`;
   document.getElementById("preload").value = `${series}-${model}-PRELOAD ${prefix}.${preloadP}(${region}R${preloadR})`;
