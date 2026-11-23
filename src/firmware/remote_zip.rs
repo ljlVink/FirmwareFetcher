@@ -9,7 +9,7 @@ use worker::{
     js_sys::{Reflect, Uint8Array},
     wasm_bindgen_futures::JsFuture,
     web_sys::{ReadableStream, ReadableStreamDefaultReader},
-    Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, ResponseBody,
+    CacheMode, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, ResponseBody,
 };
 
 const MAX_ENTRY_SIZE: u64 = 1024 * 1024;
@@ -47,7 +47,12 @@ pub(crate) async fn fetch_entry(url: &str, entry_name: &str) -> Result<String, S
     let content = read_entry(&mut remote, &tail, &entry).await?;
     let mut text = String::from_utf8(content)
         .map_err(|error| format!("{entry_name} is not valid UTF-8 text: {error}"))?;
-    text.truncate(text.trim_end_matches('\0').len());
+    let end = text.trim_end_matches('\0');
+    let end = end
+        .strip_suffix("\r\n")
+        .or_else(|| end.strip_suffix('\n'))
+        .unwrap_or(end);
+    text.truncate(end.len());
     let prefix_len = text.len() - text.trim_start_matches('\u{feff}').len();
     if prefix_len != 0 {
         drop(text.drain(..prefix_len));
@@ -118,6 +123,7 @@ impl RemoteZip<'_> {
             method: Method::Get,
             headers,
             redirect: RequestRedirect::Manual,
+            cache: Some(CacheMode::NoStore),
             ..Default::default()
         };
         let request = Request::new_with_init(self.url, &init)
@@ -133,7 +139,7 @@ impl RemoteZip<'_> {
             return Err(if (300..400).contains(&status) {
                 format!("Download server returned a redirect (HTTP {status}); following is forbidden")
             } else {
-                format!("Download server must support exact Range requests (expected HTTP 206, got {status})")
+                format!("Download server must support exact Range requests ({range_header}: expected HTTP 206, got {status})")
             });
         }
         if let Some(encoding) = header(&response, "Content-Encoding")? {
@@ -510,7 +516,7 @@ fn parse_extras<'a>(bytes: &'a [u8], name: &[u8]) -> Result<Extras<'a>, String> 
         unicode_name: None,
     };
     let mut cursor = 0;
-    while cursor < bytes.len() {
+    while bytes.len() - cursor >= 4 {
         let tag = u16_at(bytes, cursor)?;
         let length = u16_at(bytes, cursor + 2)? as usize;
         let value = slice(bytes, cursor + 4, length)?;
@@ -533,6 +539,9 @@ fn parse_extras<'a>(bytes: &'a [u8], name: &[u8]) -> Result<Extras<'a>, String> 
             _ => {}
         }
         cursor += 4 + length;
+    }
+    if bytes[cursor..].iter().any(|&byte| byte != 0) {
+        return Err("ZIP metadata or extra field is truncated".into());
     }
     Ok(extra)
 }
@@ -780,4 +789,20 @@ fn u64_at(bytes: &[u8], offset: usize) -> Result<u64, String> {
     Ok(u64::from_le_bytes([
         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_extras;
+
+    #[test]
+    fn zip_extra_alignment_does_not_hide_truncation() {
+        let extra = [1, 0, 8, 0, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        for end in 12..=15 {
+            let parsed = parse_extras(&extra[..end], b"VERSION.mbn").unwrap();
+            assert_eq!(parsed.zip64, Some(&extra[4..12]));
+        }
+        assert!(parse_extras(&[0, 0, 1], b"VERSION.mbn").is_err());
+        assert!(parse_extras(&extra[..11], b"VERSION.mbn").is_err());
+    }
 }
