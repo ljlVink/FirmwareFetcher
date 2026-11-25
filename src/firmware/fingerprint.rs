@@ -306,7 +306,7 @@ fn normalize(name: &str, value: &str) -> Result<String, String> {
     }
 }
 
-fn field(node: &Node, name: &str, optional: bool) -> Result<String, String> {
+fn field(node: &Node, name: &str, alias: Option<&str>, optional: bool) -> Result<String, String> {
     let mut value = None;
     let mut accept = |raw: &str| -> Result<(), String> {
         let normalized = normalize(name, raw)?;
@@ -316,14 +316,16 @@ fn field(node: &Node, name: &str, optional: bool) -> Result<String, String> {
         value = Some(normalized);
         Ok(())
     };
-    if let Some(raw) = node.attrs.get(name) {
-        accept(raw)?;
-    }
-    for child in node.children.iter().filter(|child| child.name == name) {
-        if !child.children.is_empty() || !child.attrs.is_empty() {
-            return Err(format!("XML {name} is not a plain text field"));
+    for key in std::iter::once(name).chain(alias) {
+        if let Some(raw) = node.attrs.get(key) {
+            accept(raw)?;
         }
-        accept(&child.text)?;
+        for child in node.children.iter().filter(|child| child.name == key) {
+            if !child.children.is_empty() || !child.attrs.is_empty() {
+                return Err(format!("XML {name} is not a plain text field"));
+            }
+            accept(&child.text)?;
+        }
     }
     value.or_else(|| optional.then(String::new)).ok_or_else(|| format!("XML is missing {name}"))
 }
@@ -338,7 +340,8 @@ fn record(node: &Node, kind: &str, fields: &[&str]) -> Result<Vec<u8>, String> {
     frame(&mut out, kind.as_bytes());
     for name in fields {
         frame(&mut out, name.as_bytes());
-        frame(&mut out, field(node, name, *name == "subpath")?.as_bytes());
+        let alias = (kind == "cloud" && *name == "size").then_some("sizeinfo");
+        frame(&mut out, field(node, name, alias, *name == "subpath")?.as_bytes());
     }
     Ok(out)
 }
@@ -348,7 +351,7 @@ fn has_field(node: &Node, fields: &[&str]) -> bool {
 }
 
 fn downloads(node: &Node, kind: &str, fields: &[&str], out: &mut Vec<Vec<u8>>) -> Result<(), String> {
-    if has_field(node, fields) {
+    if has_field(node, fields) || (kind == "cloud" && has_field(node, &["sizeinfo"])) {
         out.push(record(node, kind, fields)?);
     }
     for child in &node.children {
@@ -369,7 +372,7 @@ pub(crate) fn package_identity(xml: &[u8], selection: Option<&str>) -> Result<[u
             "files" => {
                 for file in node.children.iter().filter(|file| file.name == "file") {
                     if let Some(filename) = selection {
-                        let spath = field(file, "spath", false)?;
+                        let spath = field(file, "spath", None, false)?;
                         if spath.rsplit('/').next() != Some(filename) {
                             continue;
                         }
