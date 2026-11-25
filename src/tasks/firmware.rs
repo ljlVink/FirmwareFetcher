@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use worker::{console_log, Delay, Env, Error, MessageBatch, MessageExt, Result};
 
-use crate::domain::{CheckedFirmware, FirmwareInput, RefreshSeed, UpdateAction, VersionMatch};
+use crate::domain::{CheckedFirmware, FirmwareInput, RefreshSeed, SubmissionSource, UpdateAction, VersionMatch};
 use crate::service::{self, SaveError};
 use crate::{firmware, notifications, storage::Repository};
 
@@ -229,7 +229,7 @@ async fn notify(env: &Env, input: &FirmwareInput, target: &str) {
 }
 
 async fn save(env: &Env, input: &FirmwareInput, firmware: &CheckedFirmware) -> Result<bool> {
-    service::save(env, input, &firmware.target, &firmware.packages)
+    service::save(env, input, &firmware.target, &firmware.packages, SubmissionSource::AutoRefresh)
         .await
         .map(|saved| saved.is_some())
         .map_err(|error| match error {

@@ -1,6 +1,6 @@
 use worker::{Error, Result};
 
-use crate::domain::{FirmwareInput, FirmwarePackage, LegacyFirmware, RefreshSeed};
+use crate::domain::{FirmwareInput, FirmwarePackage, LegacyFirmware, RefreshSeed, SubmissionSource};
 
 use super::neon::{SqlQuery, SqlResult};
 use super::Repository;
@@ -63,6 +63,7 @@ SELECT jsonb_build_object(
     'requests', coalesce(jsonb_agg(jsonb_build_object(
         'id', s.id,
         'created_at', to_char(s.created_at, 'YYYY-MM-DD HH24:MI:SS'),
+        'source', s.source,
         'dev', s.dev, 'brand', s.brand, 'vendor', s.vendor, 'upgrade_or_erec', s.upgrade_or_erec,
         'targetBlVersionNumber', s.target_bl_version_number,
         'deviceName', s.model_name,
@@ -70,7 +71,7 @@ SELECT jsonb_build_object(
     ) ORDER BY s.id DESC), '[]'::jsonb)
 )::text
 FROM (
-    SELECT s.id, s.created_at, s.dev, s.brand, s.vendor, s.upgrade_or_erec, s.target_bl_version_number,
+    SELECT s.id, s.created_at, s.source, s.dev, s.brand, s.vendor, s.upgrade_or_erec, s.target_bl_version_number,
            n.model_name,
            jsonb_agg(jsonb_build_object('versionNumber', p.version_number, 'url', p.url)
                      ORDER BY p.position) AS packages
@@ -90,8 +91,8 @@ WITH packages AS (
     WHERE btrim(entry.package->>'versionNumber') !~ '^[0-9]{9}$'
 ), saved_submission AS (
     INSERT INTO firmware_submissions
-        (dev, base, cust, preload, patch, vendor, upgrade_or_erec, target_bl_version_number, content_key, brand)
-    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $11
+        (dev, base, cust, preload, patch, vendor, upgrade_or_erec, target_bl_version_number, content_key, brand, source)
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $11, $12
     WHERE EXISTS (SELECT 1 FROM packages)
       AND NOT EXISTS (
           SELECT 1 FROM firmware_submissions s
@@ -101,7 +102,7 @@ WITH packages AS (
                 = ARRAY(SELECT DISTINCT url FROM packages ORDER BY url)
       )
     ON CONFLICT (brand, content_key) DO NOTHING
-    RETURNING id, created_at, dev, brand, vendor, upgrade_or_erec, target_bl_version_number
+    RETURNING id, created_at, source, dev, brand, vendor, upgrade_or_erec, target_bl_version_number
 ), saved_packages AS (
     INSERT INTO firmware_packages (submission_id, position, version_number, url)
     SELECT s.id, p.position, p.version_number, p.url
@@ -110,6 +111,7 @@ WITH packages AS (
 )
 SELECT jsonb_build_object(
     'id', s.id, 'created_at', to_char(s.created_at, 'YYYY-MM-DD HH24:MI:SS'),
+    'source', s.source,
     'dev', s.dev, 'brand', s.brand, 'vendor', s.vendor, 'upgrade_or_erec', s.upgrade_or_erec,
     'targetBlVersionNumber', s.target_bl_version_number,
     'packages', (SELECT jsonb_agg(jsonb_build_object('versionNumber', version_number, 'url', url)
@@ -189,6 +191,7 @@ impl Repository {
         target: &str,
         packages: &[FirmwarePackage],
         key: &str,
+        source: SubmissionSource,
     ) -> Result<Option<String>> {
         let packages_json = serde_json::to_string(packages)
             .map_err(|error| Error::RustError(error.to_string()))?;
@@ -199,6 +202,7 @@ impl Repository {
                 params: &[
                     &input.dev, &input.base, &input.cust, &input.preload, input.patch.as_deref().unwrap_or(""),
                     &input.vendor, input.upgrade_or_erec.as_str(), target, key, &packages_json, input.brand,
+                    source.as_str(),
                 ],
             },
         ]).await?;

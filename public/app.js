@@ -88,6 +88,13 @@ const REGION_RULES = {
 };
 const ACTION_LABEL_KEY = { upgrade: "upgrade", recovery: "recovery", rollback: "rollback" };
 const EMULATER_LABEL_KEY = { arm64: "emulatorArm64", x86: "emulatorX86" };
+const SOURCE_LABEL_KEY = {
+  manual_version: "sourceManualVersion",
+  erec_three_package: "sourceErecThreePackage",
+  auto_refresh: "sourceAutoRefresh",
+  ffusersubmission: "sourceFfusersubmission",
+  admin_manual: "sourceAdminManual",
+};
 const $themeToggle = document.getElementById("theme-toggle");
 const THEME_COLORS = { dark: "#000000", light: "#ffffff" };
 const openDetails = new Set();
@@ -145,6 +152,21 @@ function cell(label, className, ...children) {
   return el("td", { "data-label": label, class: className }, el("div", { class: "cell-body" }, ...children));
 }
 
+function displayVersion(record) {
+  let version = record.targetBlVersionNumber;
+  const patches = new Set();
+  for (const pkg of record.packages) {
+    for (const match of pkg.versionNumber.matchAll(/(?:^|[^a-z])(patch\d+)(?![a-z0-9])/gi)) {
+      patches.add(match[1].toLowerCase());
+    }
+  }
+  const existing = new Set(Array.from(version.matchAll(/(?:^|[^a-z])(patch\d+)(?![a-z0-9])/gi), match => match[1].toLowerCase()));
+  for (const patch of patches) {
+    if (!existing.has(patch)) version += `(${patch})`;
+  }
+  return version;
+}
+
 function detailsRow(record) {
   const row = el("tr", { id: `details-${record.id}`, class: "record-details-row" });
   row.hidden = !openDetails.has(record.id);
@@ -165,7 +187,10 @@ function detailsRow(record) {
   }
   const panel = el("section", { class: "detail-panel", "aria-label": t("detailsOf", { dev: record.dev }) },
     links,
-    el("p", { class: "submission-time", text: t("submittedAt", { time: record.created_at }) }),
+    el("p", { class: "submission-meta" },
+      el("span", { class: "submission-time", text: t("submittedAt", { time: record.created_at }) }),
+      el("span", { class: "submission-source", text: t("submissionSource", { source: t(SOURCE_LABEL_KEY[record.source] ?? "sourceUnknown") }) }),
+    ),
   );
   if (honor) panel.prepend(el("p", {
     class: "notice",
@@ -177,13 +202,14 @@ function detailsRow(record) {
 
 function rowPair(record) {
   const expanded = openDetails.has(record.id);
+  const version = displayVersion(record);
   const tr = el("tr", { id: `r${record.id}`, class: record.id === lastSavedId ? "record-row saved-row" : "record-row" });
   const deviceChildren = [el("div", { class: "device-name", text: record.dev })];
   if (record.deviceName) deviceChildren.push(el("div", { class: "device-sub", text: record.deviceName }));
   tr.append(cell(t("colDevice"), "device-cell", ...deviceChildren));
   tr.append(cell("VENDOR", "vendor-cell", el("span", { class: "vendor-value", text: record.vendor })));
   tr.append(cell(t("colVersion"), "target-cell",
-    el("div", { class: "target-version", text: record.targetBlVersionNumber }),
+    el("div", { class: "target-version", text: version }),
   ));
   const actionLabel = t(record.upgrade_or_erec === "emulater" ? EMULATER_LABEL_KEY[record.vendor] : ACTION_LABEL_KEY[record.upgrade_or_erec]);
   tr.append(cell(t("packageType"), "type-cell", el("span", {
@@ -192,7 +218,7 @@ function rowPair(record) {
   const button = el("button", {
     type: "button", class: "button button-secondary button-small details-toggle",
     "aria-expanded": String(expanded), "aria-controls": `details-${record.id}`,
-    "aria-label": t("toggleDetails", { action: t(expanded ? "collapse" : "expand"), dev: record.dev, version: record.targetBlVersionNumber }),
+    "aria-label": t("toggleDetails", { action: t(expanded ? "collapse" : "expand"), dev: record.dev, version }),
     text: t(expanded ? "collapse" : "expand"),
   });
   button.addEventListener("click", () => {

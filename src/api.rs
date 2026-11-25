@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use worker::*;
 
-use crate::domain::{FirmwareInput, FirmwarePackage, UpdateAction, PER_PAGE};
+use crate::domain::{FirmwareInput, FirmwarePackage, SubmissionSource, UpdateAction, PER_PAGE};
 use crate::firmware::{self, manual, QueryEndpoint};
 use crate::service::{self, SaveError};
 use crate::{notifications, storage::Repository};
@@ -130,7 +130,7 @@ async fn create(mut req: Request, ctx: RouteContext<Context>) -> Result<Response
         Ok(checked) => checked,
         Err(failure) => return api_error(&failure.message, failure.status),
     };
-    save(input, checked.target, checked.packages, &ctx.env, &ctx.data).await
+    save(input, checked.target, checked.packages, SubmissionSource::ManualVersion, &ctx.env, &ctx.data).await
 }
 
 async fn create_manual(mut req: Request, ctx: RouteContext<Context>) -> Result<Response> {
@@ -170,11 +170,11 @@ async fn create_manual(mut req: Request, ctx: RouteContext<Context>) -> Result<R
         Ok(verified) => verified,
         Err(message) => return api_error(&message, 422),
     };
-    save(input, target, packages, &ctx.env, &ctx.data).await
+    save(input, target, packages, SubmissionSource::ErecThreePackage, &ctx.env, &ctx.data).await
 }
 
-async fn save(input: FirmwareInput, target: String, packages: Vec<FirmwarePackage>, env: &Env, context: &Context) -> Result<Response> {
-    let result = match service::save(env, &input, &target, &packages).await {
+async fn save(input: FirmwareInput, target: String, packages: Vec<FirmwarePackage>, source: SubmissionSource, env: &Env, context: &Context) -> Result<Response> {
+    let result = match service::save(env, &input, &target, &packages, source).await {
         Ok(Some(body)) => body,
         Ok(None) => return api_error("An identical package already exists", 409),
         Err(SaveError::Fingerprint(message)) => {

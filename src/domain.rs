@@ -35,6 +35,28 @@ impl FromStr for UpdateAction {
 
 pub(crate) const PER_PAGE: u32 = 50;
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SubmissionSource {
+    ManualVersion,
+    ErecThreePackage,
+    AutoRefresh,
+    Ffusersubmission,
+    AdminManual,
+}
+
+impl SubmissionSource {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ManualVersion => "manual_version",
+            Self::ErecThreePackage => "erec_three_package",
+            Self::AutoRefresh => "auto_refresh",
+            Self::Ffusersubmission => "ffusersubmission",
+            Self::AdminManual => "admin_manual",
+        }
+    }
+}
+
 pub(crate) struct FirmwareInput {
     pub(crate) brand: &'static str,
     pub(crate) dev: String,
