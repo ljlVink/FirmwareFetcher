@@ -8,11 +8,13 @@ use super::Repository;
 const LIST_SQL: &str = r#"
 WITH devices AS (
     SELECT brand, dev, code, split_part(code, '-', 1) AS family,
+           regexp_replace(split_part(code, '-', 1), '([0-9])[A-Z]+$', '\1') AS family_root,
            substring(code FROM '^[A-Z0-9]{3,}-([A-Z]+)[0-9]') AS letters,
            substring(code FROM '^[A-Z0-9]{3,}-[A-Z]+([0-9]{1,6})')::int AS digits
     FROM (SELECT DISTINCT brand, dev, upper(dev) AS code FROM firmware_submissions) d
 ), models AS (
     SELECT model_name, brand, source_file = brand || '_cn' AS cn, code, split_part(code, '-', 1) AS family,
+           regexp_replace(split_part(code, '-', 1), '([0-9])[A-Z]+$', '\1') AS family_root,
            substring(code FROM '^[A-Z0-9]{3,}-([A-Z]+)[0-9]') AS letters,
            substring(code FROM '^[A-Z0-9]{3,}-[A-Z]+([0-9]{1,6})')::int AS digits
     FROM (SELECT model_name, source_file, split_part(source_file, '_', 1) AS brand,
@@ -20,7 +22,7 @@ WITH devices AS (
           FROM device_models
           WHERE starts_with(source_file, 'huawei_') OR starts_with(source_file, 'honor_')) m
 ),
--- 机型名候选取最优一档：精确（可跨品牌，同品牌优先）> 提交型号多一位 > 机型表多一位 > CN 尾缀 > 同前缀系列；
+-- 机型名候选取最优一档：精确（可跨品牌，同品牌优先）> 提交型号多一位 > 机型表多一位 > CN 尾缀 > 同前缀系列 > 数字系列去字母尾缀；
 -- 非精确档只用同品牌；系列内比网络字母（全同 > 首字母同 > 其他）和数字距离，最后中国来源优先，并列名称用 " / " 连接。
 candidates AS (
     SELECT d.brand, d.dev, m.model_name,
@@ -31,8 +33,9 @@ candidates AS (
                CASE WHEN t.tier < 4 THEN 0 ELSE abs(m.digits - d.digits) END,
                NOT m.cn) AS position
     FROM devices d
-    JOIN models m ON m.family = d.family
+    JOIN models m ON m.family_root = d.family_root
     CROSS JOIN LATERAL (SELECT CASE
+        WHEN m.family <> d.family THEN 5
         WHEN m.code = d.code THEN 0
         WHEN length(d.code) = length(m.code) + 1 AND starts_with(d.code, m.code) THEN 1
         WHEN length(m.code) = length(d.code) + 1 AND starts_with(m.code, d.code) THEN 2
