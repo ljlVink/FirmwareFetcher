@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use worker::{console_log, Delay, Env, Error, MessageBatch, MessageExt, Result};
+use worker::{console_log, Delay, Env, Error, Result};
 
 use crate::domain::{CheckedFirmware, FirmwareInput, RefreshSeed, SubmissionSource, UpdateAction, VersionMatch};
 use crate::service::{self, SaveError};
@@ -240,7 +240,7 @@ async fn save(env: &Env, input: &FirmwareInput, firmware: &CheckedFirmware) -> R
         })
 }
 
-async fn process(job: &Job, env: &Env) -> Result<()> {
+pub(super) async fn process(job: &Job, env: &Env) -> Result<()> {
     let upgrade = job.input(UpdateAction::Upgrade);
     let diff = match firmware::query(env, &upgrade, firmware::QueryEndpoint::OtaUpdate).await {
         Ok(result) => result,
@@ -288,21 +288,3 @@ async fn process(job: &Job, env: &Env) -> Result<()> {
     Ok(())
 }
 
-pub async fn consume(batch: MessageBatch<Job>, env: Env) -> Result<()> {
-    let mut malformed = false;
-    for message in batch.iter() {
-        let message = match message {
-            Ok(message) => message,
-            Err(_) => { malformed = true; continue; }
-        };
-        match process(message.body(), &env).await {
-            Ok(()) => message.ack(),
-            Err(_) => {
-                console_log!("OTA refresh: job failed dev={}; queue retry requested", log_target(&message.body().dev));
-                message.retry();
-            }
-        }
-    }
-    if malformed { return Err(Error::RustError("OTA refresh: invalid queue message".into())); }
-    Ok(())
-}

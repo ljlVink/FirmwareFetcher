@@ -294,6 +294,12 @@ fn normalize(name: &str, value: &str) -> Result<String, String> {
             }
             Ok(value.to_ascii_lowercase())
         }
+        "md5" => {
+            if value.len() != 32 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("XML md5 must be a full MD5 hex value".into());
+            }
+            Ok(value.to_ascii_lowercase())
+        }
         "size" => {
             if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
                 return Err("Invalid XML file size".into());
@@ -341,7 +347,8 @@ fn record(node: &Node, kind: &str, fields: &[&str]) -> Result<Vec<u8>, String> {
     for name in fields {
         frame(&mut out, name.as_bytes());
         let alias = (kind == "cloud" && *name == "size").then_some("sizeinfo");
-        frame(&mut out, field(node, name, alias, *name == "subpath")?.as_bytes());
+        let input_name = if *name == "sha256" && !has_field(node, &["sha256"]) { "md5" } else { *name };
+        frame(&mut out, field(node, input_name, alias, *name == "subpath")?.as_bytes());
     }
     Ok(out)
 }
@@ -421,7 +428,7 @@ fn combine(mut packages: Vec<[u8; 32]>, domain: &[u8], prefix: &str) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::url_key;
+    use super::{package_identity, url_key};
 
     #[test]
     fn honor_url_key_ignores_scheme_and_order_but_not_path() {

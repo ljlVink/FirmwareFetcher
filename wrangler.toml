@@ -5,7 +5,7 @@ routes = [{ pattern = "firmwarefetcher.ljlvink.top/*", zone_name = "ljlvink.top"
 keep_vars = true
 
 [triggers]
-crons = ["0 16 * * *", "0 0 * * *"]
+crons = ["0 16 * * *", "30 16 * * *", "0 0 * * *"]
 
 [dev]
 port = 18787

@@ -48,7 +48,7 @@ fn remove_numeric_versions(packages: &mut Vec<FirmwarePackage>) {
     });
 }
 
-fn filelist_url(raw: &str) -> Result<String> {
+pub(crate) fn filelist_url(raw: &str) -> Result<String> {
     let mut url = Url::parse(raw)?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err(Error::RustError("invalid firmware URL".into()));

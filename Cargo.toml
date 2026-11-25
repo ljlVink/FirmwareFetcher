@@ -18,3 +18,4 @@ miniz_oxide = { version = "0.8", default-features = false }
 crc32fast = { version = "1", default-features = false }
 quick-xml = "0.37"
 sha2 = "0.10"
+aes = "0.8"

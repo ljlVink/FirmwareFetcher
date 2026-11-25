@@ -14,8 +14,8 @@ async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
 }
 
 #[event(queue)]
-async fn queue(batch: MessageBatch<tasks::firmware::Job>, env: Env, _ctx: Context) -> Result<()> {
-    tasks::firmware::consume(batch, env).await
+async fn queue(batch: MessageBatch<tasks::Job>, env: Env, _ctx: Context) -> Result<()> {
+    tasks::consume(batch, env).await
 }
 
 mod scheduled_export {
