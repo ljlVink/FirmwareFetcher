@@ -1,6 +1,6 @@
 use worker::{console_error, Env, Error, Result, Url};
 
-use crate::domain::{CheckFailure, CheckedFirmware, FirmwareInput, OtaFields, UpdateAction, VersionCheckResult};
+use crate::domain::{CheckFailure, CheckedFirmware, FirmwareInput, FirmwarePackage, OtaFields, UpdateAction, VersionCheckResult};
 
 pub(crate) mod fingerprint;
 mod honor;
@@ -39,6 +39,13 @@ impl DeviceCredentials {
             key_attestation: binding("KEY_ATT")?,
         })
     }
+}
+
+fn remove_numeric_versions(packages: &mut Vec<FirmwarePackage>) {
+    packages.retain(|package| {
+        let version = package.version_number.trim();
+        version.len() != 9 || !version.bytes().all(|byte| byte.is_ascii_digit())
+    });
 }
 
 fn filelist_url(raw: &str) -> Result<String> {
@@ -104,6 +111,7 @@ pub(crate) async fn query(
             return Err(failure(502, format!("{brand_name} server returned an unexpected format ({error}): {excerpt}")));
         }
     };
+    remove_numeric_versions(&mut result.packages);
     if result.status != "0" || result.packages.is_empty() {
         let kind = match input.upgrade_or_erec {
             UpdateAction::Upgrade => "incremental package",

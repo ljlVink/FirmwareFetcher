@@ -83,17 +83,29 @@ FROM (
 ) s
 "#;
 const INSERT_SQL: &str = r#"
-WITH saved_submission AS (
+WITH packages AS (
+    SELECT entry.position::integer AS position,
+           entry.package->>'versionNumber' AS version_number, entry.package->>'url' AS url
+    FROM jsonb_array_elements($10::jsonb) WITH ORDINALITY AS entry(package, position)
+    WHERE btrim(entry.package->>'versionNumber') !~ '^[0-9]{9}$'
+), saved_submission AS (
     INSERT INTO firmware_submissions
         (dev, base, cust, preload, patch, vendor, upgrade_or_erec, target_bl_version_number, content_key, brand)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $11)
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $11
+    WHERE EXISTS (SELECT 1 FROM packages)
+      AND NOT EXISTS (
+          SELECT 1 FROM firmware_submissions s
+          WHERE s.brand = $11
+            AND ARRAY(SELECT DISTINCT p.url FROM firmware_packages p
+                      WHERE p.submission_id = s.id ORDER BY p.url)
+                = ARRAY(SELECT DISTINCT url FROM packages ORDER BY url)
+      )
     ON CONFLICT (brand, content_key) DO NOTHING
     RETURNING id, created_at, dev, brand, vendor, upgrade_or_erec, target_bl_version_number
 ), saved_packages AS (
     INSERT INTO firmware_packages (submission_id, position, version_number, url)
-    SELECT s.id, entry.position::integer, entry.package->>'versionNumber', entry.package->>'url'
-    FROM saved_submission s
-    CROSS JOIN LATERAL jsonb_array_elements($10::jsonb) WITH ORDINALITY AS entry(package, position)
+    SELECT s.id, p.position, p.version_number, p.url
+    FROM saved_submission s CROSS JOIN packages p
     RETURNING position, version_number, url
 )
 SELECT jsonb_build_object(

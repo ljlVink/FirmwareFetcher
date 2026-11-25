@@ -8,13 +8,14 @@ mod neon;
 
 use neon::NeonDb;
 
-const MIGRATIONS: [&str; 6] = [
+const MIGRATIONS: [&str; 7] = [
     include_str!("../../migrations/001_verified_firmware.sql"),
     include_str!("../../migrations/002_content_dedup.sql"),
     include_str!("../../migrations/003_device_models.sql"),
     include_str!("../../migrations/004_emulater.sql"),
     include_str!("../../migrations/005_lgrp_num.sql"),
     include_str!("../../migrations/006_xml_fingerprints.sql"),
+    include_str!("../../migrations/007_numeric_version_cleanup.sql"),
 ];
 
 thread_local! {
