@@ -61,6 +61,10 @@ pub(crate) fn schedule(env: &Env, context: &Context, input: FirmwareInput, targe
     });
 }
 
+pub(crate) fn is_configured(env: &Env) -> bool {
+    Config::from_env(env).is_ok()
+}
+
 pub(crate) async fn send(env: &Env, input: &FirmwareInput, target: &str) -> Result<()> {
     let config = Config::from_env(env)?;
     let text = message(input, target);

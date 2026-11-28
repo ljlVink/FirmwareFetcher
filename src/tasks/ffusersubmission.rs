@@ -1,13 +1,16 @@
-use std::time::Duration;
+use std::collections::HashSet;
 
 use aes::cipher::{BlockDecrypt, KeyInit};
 use futures_util::StreamExt;
 use serde::{de::IgnoredAny, Deserialize, Serialize};
-use worker::{console_log, Delay, Env, Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
+use worker::{console_log, Env, Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 
 use crate::domain::{FirmwareInput, FirmwarePackage, SubmissionSource, UpdateAction};
+use crate::firmware::fingerprint;
 use crate::service::{self, SaveError};
-use crate::{firmware, notifications};
+use crate::{firmware, storage::Repository};
+
+use super::{NotificationKind, PendingNotification};
 
 pub(super) const CRON: &str = "30 16 * * *";
 const DATABASE: &str = "https://ffusersubmission.byethost17.com/firmwards.hash";
@@ -175,7 +178,11 @@ fn firmware_name(model: &str, packages: &[[String; 2]; 3]) -> String {
         let (p, _) = preload.split_once('(')?;
         let (_, revision) = packages[2][0].rsplit_once('R')?;
         let (r, _) = revision.split_once(')')?;
-        Some(format!("{model} {version}({region}E{e}R{r}P{p})"))
+        if let Some(prefix) = version.strip_suffix(')') {
+            Some(format!("{model} {prefix}{region}E{e}R{r}P{p})"))
+        } else {
+            Some(format!("{model} {version}({region}E{e}R{r}P{p})"))
+        }
     };
     build().unwrap_or_else(|| packages[0][0].clone())
 }
@@ -208,39 +215,137 @@ fn parse(input: &[u8]) -> std::result::Result<Vec<Job>, String> {
 }
 
 pub(super) async fn enqueue(env: &Env) -> Result<()> {
-    let jobs = parse(&download().await?).map_err(Error::RustError)?;
+    let parsed = parse(&download().await?).map_err(Error::RustError)?;
+    let total = parsed.len();
+    let mut seen = HashSet::with_capacity(total);
+    let mut keys = Vec::with_capacity(total);
+    let mut candidates = Vec::with_capacity(total);
+    for job in parsed {
+        match fingerprint::url_set_key(&job.packages) {
+            Some(key) => {
+                if seen.insert(key.clone()) {
+                    keys.push(key.clone());
+                    candidates.push((Some(key), job));
+                }
+            }
+            None => candidates.push((None, job)),
+        }
+    }
+    let existing = if keys.is_empty() {
+        HashSet::new()
+    } else {
+        Repository::connect(env).await?.existing_url_set_keys("huawei", &keys).await?
+    };
+    let jobs: Vec<Job> = candidates
+        .into_iter()
+        .filter(|(key, _)| key.as_deref().map_or(true, |k| !existing.contains(k)))
+        .map(|(_, job)| job)
+        .collect();
+    let skipped = total - jobs.len();
     let queue = env.queue("OTA_REFRESH")?;
     for chunk in jobs.chunks(100) {
         queue.send_batch::<&Job, _>(chunk.iter()).await?;
     }
-    console_log!("ffusersubmission: queued {} firmware records", jobs.len());
+    console_log!(
+        "ffusersubmission: parsed {} firmware records, skipped {} existing, queued {}",
+        total,
+        skipped,
+        jobs.len()
+    );
     Ok(())
 }
 
-pub(super) async fn process(job: &Job, env: &Env) -> Result<()> {
-    let [base, cust, preload] = &job.requirements;
-    let input = FirmwareInput {
-        brand: "huawei", dev: job.model.clone(), vendor: job.vendor.clone(),
-        base: base.clone(), cust: cust.clone(), preload: preload.clone(),
-        patch: None, upgrade_or_erec: UpdateAction::Recovery,
-    };
-    let saved = service::save(env, &input, &job.target, &job.packages, SubmissionSource::Ffusersubmission)
-        .await.map_err(|error| match error {
-            SaveError::Fingerprint(message) => Error::RustError(format!("ffusersubmission: XML fingerprint failed: {message}")),
-            SaveError::Storage(error) => error,
-        })?;
-    if saved.is_some() {
-        console_log!("ffusersubmission: inserted firmware");
-        if env.secret("TG_BOT_KEY").is_ok() && env.secret("TG_GROUP").is_ok() {
-            if notifications::send(env, &input, &job.target).await.is_err() {
-                console_log!("ffusersubmission: Telegram failed");
-            }
-            Delay::from(Duration::from_millis(3100)).await;
-        }
-    } else {
-        console_log!("ffusersubmission: duplicate firmware");
+pub(super) async fn process_batch(
+    jobs: &[&Job],
+    env: &Env,
+    repository: &mut Option<Repository>,
+) -> (Vec<Result<()>>, Vec<PendingNotification>) {
+    let mut outcomes: Vec<Result<()>> = (0..jobs.len()).map(|_| Ok(())).collect();
+    let mut notifications = Vec::new();
+    if jobs.is_empty() {
+        return (outcomes, notifications);
     }
-    Ok(())
+
+    let repo = match repository {
+        Some(repo) => repo,
+        None => match Repository::connect(env).await {
+            Ok(repo) => repository.insert(repo),
+            Err(error) => {
+                let message = error.to_string();
+                for outcome in &mut outcomes {
+                    *outcome = Err(Error::RustError(message.clone()));
+                }
+                return (outcomes, notifications);
+            }
+        },
+    };
+
+    let job_keys: Vec<Option<String>> = jobs
+        .iter()
+        .map(|job| fingerprint::url_set_key(&job.packages))
+        .collect();
+    let lookup_keys: Vec<String> = job_keys.iter().flatten().cloned().collect();
+    let mut existing = match repo.existing_url_set_keys("huawei", &lookup_keys).await {
+        Ok(keys) => keys,
+        Err(error) => {
+            let message = error.to_string();
+            for outcome in &mut outcomes {
+                *outcome = Err(Error::RustError(message.clone()));
+            }
+            return (outcomes, notifications);
+        }
+    };
+
+    for (index, (job, url_key)) in jobs.iter().zip(job_keys).enumerate() {
+        if url_key.as_deref().is_some_and(|key| existing.contains(key)) {
+            console_log!("ffusersubmission: duplicate firmware");
+            continue;
+        }
+        let [base, cust, preload] = &job.requirements;
+        let input = FirmwareInput {
+            brand: "huawei", dev: job.model.clone(), vendor: job.vendor.clone(),
+            base: base.clone(), cust: cust.clone(), preload: preload.clone(),
+            patch: None, upgrade_or_erec: UpdateAction::Recovery,
+        };
+        let saved = service::save_with_repository(
+            repo,
+            &input,
+            &job.target,
+            &job.packages,
+            SubmissionSource::Ffusersubmission,
+        )
+        .await
+        .map_err(|error| match error {
+            SaveError::Fingerprint(message) => {
+                Error::RustError(format!("ffusersubmission: XML fingerprint failed: {message}"))
+            }
+            SaveError::Storage(error) => error,
+        });
+        match saved {
+            Ok(Some(_)) => {
+                console_log!("ffusersubmission: inserted firmware");
+                if let Some(key) = url_key {
+                    existing.insert(key);
+                }
+                notifications.push(PendingNotification {
+                    kind: NotificationKind::Ffusersubmission,
+                    input,
+                    target: job.target.clone(),
+                });
+            }
+            Ok(None) => {
+                console_log!("ffusersubmission: duplicate firmware");
+                if let Some(key) = url_key {
+                    existing.insert(key);
+                }
+            }
+            Err(error) => {
+                outcomes[index] = Err(error);
+            }
+        }
+    }
+
+    (outcomes, notifications)
 }
 
 #[cfg(test)]
@@ -300,5 +405,15 @@ mod tests {
         assert_eq!(job.requirements, ["BASE 10.0.0.10", "CUST 10.0.0.11", "PRELOAD 10.0.0.3"]);
         assert_eq!(job.packages[0].version_number, packages[0][0]);
         assert_eq!(job.packages[0].url, "http://update.dbankcdn.com/base/full/filelist.xml");
+
+        let sp_packages = [
+            ["BRE-LGRP9-CHN 207.0.0.111(SP18)", "http://update.dbankcdn.com/sp-base/"],
+            ["BRE-AL80-CUST 207.0.0.111(C00)", "http://update.dbankcdn.com/sp-cust/"],
+            ["BRE-AL80-PRELOAD 207.0.0.2(C00R1)", "http://update.dbankcdn.com/sp-preload/"],
+        ];
+        assert_eq!(
+            firmware_name("BRE-AL80", &sp_packages.map(|pair| pair.map(str::to_owned))),
+            "BRE-AL80 207.0.0.111(SP18C00E111R1P2)"
+        );
     }
 }

@@ -25,6 +25,6 @@ queue = "firmwarefetcher-ota-refresh"
 
 [[queues.consumers]]
 queue = "firmwarefetcher-ota-refresh"
-max_batch_size = 1
-max_batch_timeout = 1
+max_batch_size = 15
+max_batch_timeout = 2
 max_concurrency = 1

@@ -44,6 +44,18 @@ impl NeonDb {
         self.send(&SqlQuery { query: sql, params }).await
     }
 
+    pub async fn query_allowing_missing_relation(
+        &self,
+        sql: &str,
+        params: &[&str],
+    ) -> Result<Option<SqlResult>, Error> {
+        match self.send_raw(&SqlQuery { query: sql, params }).await? {
+            Ok(result) => Ok(Some(result)),
+            Err(failure) if failure.is_undefined_table() => Ok(None),
+            Err(failure) => Err(failure.into_error()),
+        }
+    }
+
     pub async fn batch(&self, queries: &[SqlQuery<'_>]) -> Result<Vec<SqlResult>, Error> {
         #[derive(Serialize)]
         struct Batch<'a> {
@@ -54,6 +66,16 @@ impl NeonDb {
     }
 
     async fn send<T: Serialize + ?Sized, R: DeserializeOwned>(&self, payload: &T) -> Result<R, Error> {
+        match self.send_raw(payload).await? {
+            Ok(value) => Ok(value),
+            Err(failure) => Err(failure.into_error()),
+        }
+    }
+
+    async fn send_raw<T: Serialize + ?Sized, R: DeserializeOwned>(
+        &self,
+        payload: &T,
+    ) -> Result<std::result::Result<R, HttpFailure>, Error> {
         let body = serde_json::to_string(payload)
             .map_err(|e| Error::RustError(format!("neon bad json: {e}")))?;
         let headers = Headers::new();
@@ -72,16 +94,41 @@ impl NeonDb {
         let status = resp.status_code();
         let text = resp.text().await?;
         if status != 200 {
-            let msg = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| {
-                    v.get("message")
-                        .and_then(|m| m.as_str())
-                        .map(str::to_owned)
-                })
+            let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
+            let code = parsed
+                .as_ref()
+                .and_then(|v| v.get("code"))
+                .and_then(|c| c.as_str())
+                .map(str::to_owned);
+            let message = parsed
+                .as_ref()
+                .and_then(|v| v.get("message"))
+                .and_then(|m| m.as_str())
+                .map(str::to_owned)
                 .unwrap_or_else(|| text.chars().take(300).collect());
-            return Err(Error::RustError(format!("neon http {status}: {msg}")));
+            return Ok(Err(HttpFailure { status, code, message }));
         }
-        serde_json::from_str(&text).map_err(|e| Error::RustError(format!("neon bad json: {e}")))
+        let parsed = serde_json::from_str(&text)
+            .map_err(|e| Error::RustError(format!("neon bad json: {e}")))?;
+        Ok(Ok(parsed))
+    }
+}
+
+struct HttpFailure {
+    status: u16,
+    code: Option<String>,
+    message: String,
+}
+
+impl HttpFailure {
+    fn is_undefined_table(&self) -> bool {
+        self.status == 400
+            && (self.code.as_deref() == Some("42P01")
+                || (self.message.contains("schema_migrations")
+                    && self.message.contains("does not exist")))
+    }
+
+    fn into_error(self) -> Error {
+        Error::RustError(format!("neon http {}: {}", self.status, self.message))
     }
 }

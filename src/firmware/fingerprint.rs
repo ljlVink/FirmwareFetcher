@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use futures_util::stream::{self, StreamExt, TryStreamExt};
 use quick_xml::{events::Event, Reader};
 use sha2::{Digest, Sha256};
 use wasm_bindgen::{JsCast, JsValue};
@@ -10,11 +11,32 @@ use worker::{
     Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, ResponseBody, Url,
 };
 
-use crate::domain::FirmwarePackage;
+use crate::domain::{is_numeric_changelog_version, FirmwarePackage};
 
 const MAX_XML_SIZE: usize = 1024 * 1024;
 const MAX_PACKAGES: usize = 32;
 const MAX_NODES: usize = 16_384;
+const XML_FETCH_CONCURRENCY: usize = 4;
+
+pub(crate) fn url_set_key(packages: &[FirmwarePackage]) -> Option<String> {
+    let urls: BTreeSet<&str> = packages
+        .iter()
+        .filter(|package| !is_numeric_changelog_version(&package.version_number))
+        .map(|package| package.url.as_str())
+        .collect();
+    if urls.is_empty() {
+        return None;
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"FirmwareFetcher URL set v1");
+    for url in urls {
+        digest.update(b"\n");
+        digest.update(url.len().to_string().as_bytes());
+        digest.update(b":");
+        digest.update(url.as_bytes());
+    }
+    Some(format!("urlset:v1:{:x}", digest.finalize()))
+}
 
 /// Huawei: only upstream XML file identities participate, never version labels or URLs.
 /// Honor: the CDN rejects Workers egress, so identity is the manifest URL path
@@ -27,11 +49,14 @@ pub(crate) async fn content_key(
     if brand == "honor" {
         return url_key(&sources);
     }
-    let mut identities = Vec::with_capacity(sources.len());
-    for (url, selection) in sources {
-        let xml = fetch_xml(&url).await?;
-        identities.push(package_identity(&xml, selection.as_deref())?);
-    }
+    let identities = stream::iter(sources)
+        .map(|(url, selection)| async move {
+            let xml = fetch_xml(&url).await?;
+            package_identity(&xml, selection.as_deref())
+        })
+        .buffer_unordered(XML_FETCH_CONCURRENCY)
+        .try_collect::<Vec<_>>()
+        .await?;
     combine(identities, b"FirmwareFetcher XML content v1\0", "xml")
 }
 
@@ -428,7 +453,8 @@ fn combine(mut packages: Vec<[u8; 32]>, domain: &[u8], prefix: &str) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::{package_identity, url_key};
+    use super::{url_key, url_set_key};
+    use crate::domain::FirmwarePackage;
 
     #[test]
     fn honor_url_key_ignores_scheme_and_order_but_not_path() {
@@ -440,5 +466,31 @@ mod tests {
         assert_eq!(key, url_key(&[source(&b.replacen("http:", "https:", 1)), source(a)]).unwrap());
         assert_ne!(key, url_key(&[source(a), source(&b.replace("v926410", "v926411"))]).unwrap());
         assert_ne!(key, url_key(&[source(a), source(b), source(b)]).unwrap());
+    }
+
+    #[test]
+    fn url_set_key_ignores_order_duplicates_and_nine_digit_changelogs() {
+        let pkg = |version: &str, url: &str| FirmwarePackage {
+            version_number: version.to_owned(),
+            url: url.to_owned(),
+        };
+        let a = "http://update.dbankcdn.com/a/full/filelist.xml";
+        let b = "http://update.dbankcdn.com/b/full/filelist.xml";
+        let key = url_set_key(&[pkg("BASE 1.0", a), pkg("CUST 1.0", b)]).unwrap();
+        assert!(key.starts_with("urlset:v1:") && key.len() == 10 + 64);
+        assert_eq!(
+            key,
+            url_set_key(&[
+                pkg("CUST 1.0", b),
+                pkg("BASE 1.0", a),
+                pkg("DUP 1.0", a),
+                pkg(" 123456789 ", "http://update.dbankcdn.com/changelog/full/filelist.xml"),
+            ]).unwrap()
+        );
+        assert_ne!(
+            key,
+            url_set_key(&[pkg("BASE 1.0", &a.replacen("http:", "https:", 1)), pkg("CUST 1.0", b)]).unwrap()
+        );
+        assert!(url_set_key(&[pkg("123456789", a)]).is_none());
     }
 }

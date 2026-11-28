@@ -122,12 +122,29 @@ async fn create(mut req: Request, ctx: RouteContext<Context>) -> Result<Response
     } else {
         QueryEndpoint::OtaUpdate
     };
-    let input = match validate(parsed) {
+    let mut input = match validate(parsed) {
         Ok(input) => input,
         Err(message) => return api_error(&message, 400),
     };
     let checked = match firmware::query(&ctx.env, &input, endpoint).await {
         Ok(checked) => checked,
+        Err(failure) if failure.status == 422 && input.brand == "huawei" => {
+            match firmware::preload_fallback(&input.preload) {
+                Some(fallback) => {
+                    input.preload = fallback;
+                    match firmware::query(&ctx.env, &input, endpoint).await {
+                        Ok(checked) => checked,
+                        Err(retry_failure) if retry_failure.status == 422 => {
+                            return api_error(&failure.message, failure.status);
+                        }
+                        Err(retry_failure) => {
+                            return api_error(&retry_failure.message, retry_failure.status);
+                        }
+                    }
+                }
+                None => return api_error(&failure.message, failure.status),
+            }
+        }
         Err(failure) => return api_error(&failure.message, failure.status),
     };
     save(input, checked.target, checked.packages, SubmissionSource::ManualVersion, &ctx.env, &ctx.data).await

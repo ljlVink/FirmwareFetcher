@@ -1,6 +1,6 @@
 use worker::{console_log, Env};
 
-use crate::domain::{FirmwareInput, FirmwarePackage, SubmissionSource};
+use crate::domain::{FirmwareInput, FirmwarePackage, LegacyFirmware, SubmissionSource};
 use crate::firmware::fingerprint;
 use crate::storage::Repository;
 
@@ -26,12 +26,44 @@ pub(crate) async fn save(
         .await
         .map_err(SaveError::Fingerprint)?;
     let repository = Repository::connect(env).await?;
-    baseline_legacy(&repository, input.brand, target).await?;
-    Ok(repository.insert_firmware(input, target, packages, &key, source).await?)
+    save_with_key(&repository, input, target, packages, &key, source).await
 }
 
-async fn baseline_legacy(repository: &Repository, brand: &str, target: &str) -> worker::Result<()> {
-    for record in repository.legacy_firmware(brand, target).await? {
+pub(crate) async fn save_with_repository(
+    repository: &Repository,
+    input: &FirmwareInput,
+    target: &str,
+    packages: &[FirmwarePackage],
+    source: SubmissionSource,
+) -> Result<Option<String>, SaveError> {
+    let key = fingerprint::content_key(input.brand, packages)
+        .await
+        .map_err(SaveError::Fingerprint)?;
+    save_with_key(repository, input, target, packages, &key, source).await
+}
+
+async fn save_with_key(
+    repository: &Repository,
+    input: &FirmwareInput,
+    target: &str,
+    packages: &[FirmwarePackage],
+    key: &str,
+    source: SubmissionSource,
+) -> Result<Option<String>, SaveError> {
+    let attempt = repository.try_insert_firmware(input, target, packages, key, source).await?;
+    if attempt.legacy.is_empty() {
+        return Ok(attempt.saved.map(|value| value.to_string()));
+    }
+    baseline_legacy(repository, input.brand, attempt.legacy).await?;
+    Ok(repository.insert_firmware_after_baseline(input, target, packages, key, source).await?)
+}
+
+async fn baseline_legacy(
+    repository: &Repository,
+    brand: &str,
+    legacy: Vec<LegacyFirmware>,
+) -> worker::Result<()> {
+    for record in legacy {
         let key = match fingerprint::content_key(brand, &record.packages).await {
             Ok(key) => key,
             Err(_) => {

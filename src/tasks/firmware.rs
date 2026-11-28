@@ -1,14 +1,18 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
+use std::collections::BTreeMap;
 
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
-use worker::{console_log, Delay, Env, Error, Result};
+use worker::{console_log, Env, Error, Result};
 
-use crate::domain::{CheckedFirmware, FirmwareInput, RefreshSeed, SubmissionSource, UpdateAction, VersionMatch};
+use crate::domain::{CheckedFirmware, FirmwareInput, RefreshSeeds, SubmissionSource, UpdateAction, VersionMatch};
+use crate::firmware::fingerprint;
 use crate::service::{self, SaveError};
-use crate::{firmware, notifications, storage::Repository};
+use crate::{firmware, storage::Repository};
+
+use super::{NotificationKind, PendingNotification};
 
 pub const CRON: &str = "0 16 * * *";
+const OTA_QUERY_CONCURRENCY: usize = 5;
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -133,22 +137,15 @@ fn triple<'a>(versions: impl IntoIterator<Item = &'a str>) -> Option<Triple> {
 type Branch = (String, String, String, String, u64, u64);
 type Rank = (Version, u64, Version, Version, i64);
 
-fn select_seeds(rows: Vec<RefreshSeed>) -> (Vec<Job>, usize, usize) {
+fn select_seeds(data: RefreshSeeds) -> (Vec<Job>, usize, usize) {
     let mut latest: BTreeMap<Branch, (Rank, Job)> = BTreeMap::new();
-    let mut skipped = 0;
-    let mut upgrade_models = BTreeSet::new();
-    let mut recovery_models = BTreeSet::new();
-    for row in rows {
-        if row.action != UpdateAction::Recovery {
-            upgrade_models.insert(row.dev);
-            continue;
-        }
-        recovery_models.insert(row.dev.clone());
+    let mut skipped = data.invalid_recovery;
+    for row in data.seeds {
         let Some(t) = triple(row.packages.as_deref().unwrap_or_default().iter().map(String::as_str)) else {
             skipped += 1;
             continue;
         };
-        if row.lgrp.as_deref() != Some(t.lgrp.as_str()) {
+        if row.lgrp != t.lgrp {
             skipped += 1;
             continue;
         }
@@ -161,13 +158,12 @@ fn select_seeds(rows: Vec<RefreshSeed>) -> (Vec<Job>, usize, usize) {
             _ => {}
         }
     }
-    let without_recovery = upgrade_models.difference(&recovery_models).count();
-    (latest.into_values().map(|(_, job)| job).collect(), skipped, without_recovery)
+    (latest.into_values().map(|(_, job)| job).collect(), skipped, data.upgrade_only)
 }
 
 pub async fn enqueue(env: &Env) -> Result<()> {
-    let rows = Repository::connect(env).await?.refresh_seeds().await?;
-    let (jobs, skipped, upgrade_only) = select_seeds(rows);
+    let data = Repository::connect(env).await?.refresh_seeds().await?;
+    let (jobs, skipped, upgrade_only) = select_seeds(data);
     console_log!("OTA refresh: {} branches, {} invalid recovery rows, {} upgrade-only models", jobs.len(), skipped, upgrade_only);
     let queue = env.queue("OTA_REFRESH")?;
     for chunk in jobs.chunks(100) {
@@ -213,23 +209,15 @@ fn complete_target(matches: &[VersionMatch], dev: &str, expected_lgrp: &str) -> 
     Ok(None)
 }
 
-fn log_target(target: &str) -> String {
+pub(super) fn log_target(target: &str) -> String {
     target.chars().take(160).map(|c| {
         if c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '-' | '_' | '(' | ')') { c }
         else { '?' }
     }).collect()
 }
 
-async fn notify(env: &Env, input: &FirmwareInput, target: &str) {
-    match notifications::send(env, input, target).await {
-        Ok(()) => console_log!("OTA refresh: Telegram delivered dev={} action={} target={}", log_target(&input.dev), input.upgrade_or_erec.as_str(), log_target(target)),
-        Err(_) => console_log!("OTA refresh: Telegram failed dev={} action={} target={}", log_target(&input.dev), input.upgrade_or_erec.as_str(), log_target(target)),
-    }
-    Delay::from(Duration::from_millis(3100)).await;
-}
-
-async fn save(env: &Env, input: &FirmwareInput, firmware: &CheckedFirmware) -> Result<bool> {
-    service::save(env, input, &firmware.target, &firmware.packages, SubmissionSource::AutoRefresh)
+async fn save(repository: &Repository, input: &FirmwareInput, firmware: &CheckedFirmware) -> Result<bool> {
+    service::save_with_repository(repository, input, &firmware.target, &firmware.packages, SubmissionSource::AutoRefresh)
         .await
         .map(|saved| saved.is_some())
         .map_err(|error| match error {
@@ -240,51 +228,259 @@ async fn save(env: &Env, input: &FirmwareInput, firmware: &CheckedFirmware) -> R
         })
 }
 
-pub(super) async fn process(job: &Job, env: &Env) -> Result<()> {
-    let upgrade = job.input(UpdateAction::Upgrade);
-    let diff = match firmware::query(env, &upgrade, firmware::QueryEndpoint::OtaUpdate).await {
-        Ok(result) => result,
-        Err(failure) if failure.status == 422 => {
-            console_log!("OTA refresh: no upgrade package for {}", job.dev);
-            return Ok(());
+pub(super) async fn process_batch(
+    jobs: &[&Job],
+    env: &Env,
+    repository: &mut Option<Repository>,
+) -> (Vec<Result<()>>, Vec<PendingNotification>) {
+    let mut outcomes: Vec<Result<()>> = (0..jobs.len()).map(|_| Ok(())).collect();
+    let mut notifications = Vec::new();
+    if jobs.is_empty() {
+        return (outcomes, notifications);
+    }
+
+    let mut upgrade_responses = stream::iter(jobs.iter().enumerate())
+        .map(|(index, job)| async move {
+            let input = job.input(UpdateAction::Upgrade);
+            let result = firmware::query(env, &input, firmware::QueryEndpoint::OtaUpdate).await;
+            (index, input, result)
+        })
+        .buffer_unordered(OTA_QUERY_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    upgrade_responses.sort_by_key(|(index, _, _)| *index);
+
+    let mut upgrade_hits = Vec::new();
+    for (index, input, result) in upgrade_responses {
+        match result {
+            Ok(diff) => {
+                let url_key = fingerprint::url_set_key(&diff.packages);
+                upgrade_hits.push((index, input, diff, url_key));
+            }
+            Err(failure) if failure.status == 422 => {
+                console_log!("OTA refresh: no upgrade package for {}", jobs[index].dev);
+            }
+            Err(failure) => {
+                outcomes[index] = Err(Error::RustError(format!(
+                    "OTA refresh: upgrade query failed ({})",
+                    failure.status
+                )));
+            }
         }
-        Err(failure) => return Err(Error::RustError(format!("OTA refresh: upgrade query failed ({})", failure.status))),
-    };
-    if save(env, &upgrade, &diff).await? {
-        console_log!("OTA refresh: inserted action=upgrade target={}", log_target(&diff.target));
-        notify(env, &upgrade, &diff.target).await;
-    } else {
-        console_log!("OTA refresh: duplicate action=upgrade target={}", log_target(&diff.target));
     }
-    let Some((_, lgrp, _, _)) = base_parts(&job.base) else {
-        return Err(Error::RustError("OTA refresh: invalid seed base".into()));
+    if upgrade_hits.is_empty() {
+        return (outcomes, notifications);
+    }
+
+    let repo = match repository {
+        Some(repo) => repo,
+        None => match Repository::connect(env).await {
+            Ok(repo) => repository.insert(repo),
+            Err(error) => {
+                let message = error.to_string();
+                for (index, _, _, _) in upgrade_hits {
+                    outcomes[index] = Err(Error::RustError(message.clone()));
+                }
+                return (outcomes, notifications);
+            }
+        },
     };
-    let Some(target) = complete_target(&diff.matches, &job.dev, lgrp)? else {
-        console_log!("OTA refresh: no complete target for {}", job.dev);
-        return Ok(());
-    };
-    let recovery_job = Job { dev: job.dev.clone(), vendor: job.vendor.clone(),
-        base: target.base, cust: target.cust, preload: target.preload };
-    let recovery = recovery_job.input(UpdateAction::Recovery);
-    let full = match firmware::query(env, &recovery, firmware::QueryEndpoint::OtaUpdate).await {
-        Ok(result) => result,
-        Err(failure) if failure.status == 422 => {
-            console_log!("OTA refresh: no recovery package for {}", job.dev);
-            return Ok(());
+
+    let upgrade_keys: Vec<String> = upgrade_hits
+        .iter()
+        .filter_map(|(_, _, _, key)| key.clone())
+        .collect();
+    let mut existing_keys = match repo.existing_url_set_keys("huawei", &upgrade_keys).await {
+        Ok(keys) => keys,
+        Err(error) => {
+            let message = error.to_string();
+            for (index, _, _, _) in upgrade_hits {
+                outcomes[index] = Err(Error::RustError(message.clone()));
+            }
+            return (outcomes, notifications);
         }
-        Err(failure) => return Err(Error::RustError(format!("OTA refresh: recovery query failed ({})", failure.status))),
     };
-    let actual = triple(full.packages.iter().map(|p| p.version_number.as_str()))
-        .ok_or_else(|| Error::RustError("OTA refresh: incomplete recovery packages".into()))?;
-    if actual.lgrp != lgrp {
-        return Err(Error::RustError("OTA refresh: recovery response LGRP mismatch".into()));
+
+    let mut recovery_tasks = Vec::new();
+    for (index, upgrade, diff, url_key) in upgrade_hits {
+        let already_saved = url_key.as_deref().is_some_and(|key| existing_keys.contains(key));
+        if already_saved {
+            console_log!("OTA refresh: duplicate action=upgrade target={}", log_target(&diff.target));
+        } else {
+            match save(repo, &upgrade, &diff).await {
+                Ok(true) => {
+                    console_log!("OTA refresh: inserted action=upgrade target={}", log_target(&diff.target));
+                    if let Some(key) = url_key {
+                        existing_keys.insert(key);
+                    }
+                    notifications.push(PendingNotification {
+                        kind: NotificationKind::Ota,
+                        input: upgrade,
+                        target: diff.target,
+                    });
+                }
+                Ok(false) => {
+                    console_log!("OTA refresh: duplicate action=upgrade target={}", log_target(&diff.target));
+                    if let Some(key) = url_key {
+                        existing_keys.insert(key);
+                    }
+                }
+                Err(error) => {
+                    outcomes[index] = Err(error);
+                    continue;
+                }
+            }
+        }
+        let Some((_, lgrp, _, _)) = base_parts(&jobs[index].base) else {
+            outcomes[index] = Err(Error::RustError("OTA refresh: invalid seed base".into()));
+            continue;
+        };
+        let target = match complete_target(&diff.matches, &jobs[index].dev, lgrp) {
+            Ok(Some(target)) => target,
+            Ok(None) => {
+                console_log!("OTA refresh: no complete target for {}", jobs[index].dev);
+                continue;
+            }
+            Err(error) => {
+                outcomes[index] = Err(error);
+                continue;
+            }
+        };
+        let recovery_job = Job {
+            dev: jobs[index].dev.clone(),
+            vendor: jobs[index].vendor.clone(),
+            base: target.base,
+            cust: target.cust,
+            preload: target.preload,
+        };
+        recovery_tasks.push((index, lgrp.to_owned(), recovery_job.input(UpdateAction::Recovery)));
     }
-    if save(env, &recovery, &full).await? {
-        console_log!("OTA refresh: inserted action=recovery target={}", log_target(&full.target));
-        notify(env, &recovery, &full.target).await;
-    } else {
-        console_log!("OTA refresh: duplicate action=recovery target={}", log_target(&full.target));
+
+    if recovery_tasks.is_empty() {
+        return (outcomes, notifications);
     }
-    Ok(())
+
+    let mut recovery_responses = stream::iter(recovery_tasks)
+        .map(|(index, lgrp, input)| async move {
+            let result = firmware::query(env, &input, firmware::QueryEndpoint::OtaUpdate).await;
+            (index, lgrp, input, result)
+        })
+        .buffer_unordered(OTA_QUERY_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    recovery_responses.sort_by_key(|(index, _, _, _)| *index);
+
+    let mut recovery_hits = Vec::new();
+    for (index, lgrp, recovery, result) in recovery_responses {
+        let full = match result {
+            Ok(full) => full,
+            Err(failure) if failure.status == 422 => {
+                console_log!("OTA refresh: no recovery package for {}", jobs[index].dev);
+                continue;
+            }
+            Err(failure) => {
+                outcomes[index] = Err(Error::RustError(format!(
+                    "OTA refresh: recovery query failed ({})",
+                    failure.status
+                )));
+                continue;
+            }
+        };
+        let Some(actual) = triple(full.packages.iter().map(|p| p.version_number.as_str())) else {
+            outcomes[index] = Err(Error::RustError("OTA refresh: incomplete recovery packages".into()));
+            continue;
+        };
+        if actual.lgrp != lgrp {
+            outcomes[index] = Err(Error::RustError("OTA refresh: recovery response LGRP mismatch".into()));
+            continue;
+        }
+        let url_key = fingerprint::url_set_key(&full.packages);
+        recovery_hits.push((index, recovery, full, url_key));
+    }
+
+    if recovery_hits.is_empty() {
+        return (outcomes, notifications);
+    }
+
+    let pending_recovery_keys: Vec<String> = recovery_hits
+        .iter()
+        .filter_map(|(_, _, _, key)| key.as_ref().filter(|k| !existing_keys.contains(*k)).cloned())
+        .collect();
+    if !pending_recovery_keys.is_empty() {
+        match repo.existing_url_set_keys("huawei", &pending_recovery_keys).await {
+            Ok(found) => existing_keys.extend(found),
+            Err(error) => {
+                let message = error.to_string();
+                for (index, _, _, _) in recovery_hits {
+                    outcomes[index] = Err(Error::RustError(message.clone()));
+                }
+                return (outcomes, notifications);
+            }
+        }
+    }
+
+    for (index, recovery, full, url_key) in recovery_hits {
+        let already_saved = url_key.as_deref().is_some_and(|key| existing_keys.contains(key));
+        if already_saved {
+            console_log!("OTA refresh: duplicate action=recovery target={}", log_target(&full.target));
+            continue;
+        }
+        match save(repo, &recovery, &full).await {
+            Ok(true) => {
+                console_log!("OTA refresh: inserted action=recovery target={}", log_target(&full.target));
+                if let Some(key) = url_key {
+                    existing_keys.insert(key);
+                }
+                notifications.push(PendingNotification {
+                    kind: NotificationKind::Ota,
+                    input: recovery,
+                    target: full.target,
+                });
+            }
+            Ok(false) => {
+                console_log!("OTA refresh: duplicate action=recovery target={}", log_target(&full.target));
+                if let Some(key) = url_key {
+                    existing_keys.insert(key);
+                }
+            }
+            Err(error) => {
+                outcomes[index] = Err(error);
+            }
+        }
+    }
+
+    (outcomes, notifications)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::RefreshSeed;
+
+    #[test]
+    fn select_seeds_picks_highest_version_per_branch_and_tracks_counts() {
+        let seed = |id, base: &str, cust: &str, preload: &str, lgrp: &str| RefreshSeed {
+            id,
+            dev: "MNA-AL00".into(),
+            vendor: "all_cn".into(),
+            lgrp: lgrp.into(),
+            packages: Some(vec![base.into(), cust.into(), preload.into()]),
+        };
+        let data = RefreshSeeds {
+            upgrade_only: 3,
+            invalid_recovery: 2,
+            seeds: vec![
+                seed(1, "MNA-LGRP1-CHN 4.0.0.100", "MNA-AL00-CUST 4.0.0.1(C00)", "MNA-AL00-PRELOAD 4.0.0.1(C00R1)", "LGRP1"),
+                seed(2, "MNA-LGRP1-CHN 4.0.0.120(SP2)", "MNA-AL00-CUST 4.0.0.2(C00)", "MNA-AL00-PRELOAD 4.0.0.1(C00R1)", "LGRP1"),
+                seed(3, "MNA-LGRP1-CHN 4.0.0.120(SP1)", "MNA-AL00-CUST 4.0.0.2(C00)", "MNA-AL00-PRELOAD 4.0.0.1(C00R1)", "LGRP1"),
+                seed(4, "MNA-LGRP1-CHN 4.0.0.130", "MNA-AL00-CUST 4.0.0.1(C00)", "MNA-AL00-PRELOAD 4.0.0.1(C00R1)", "LGRP2"),
+            ],
+        };
+        let (jobs, skipped, upgrade_only) = select_seeds(data);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].base, "MNA-LGRP1-CHN 4.0.0.120(SP2)");
+        assert_eq!(skipped, 3);
+        assert_eq!(upgrade_only, 3);
+    }
 }
 

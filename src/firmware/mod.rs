@@ -1,6 +1,6 @@
 use worker::{console_error, Env, Error, Result, Url};
 
-use crate::domain::{CheckFailure, CheckedFirmware, FirmwareInput, FirmwarePackage, OtaFields, UpdateAction, VersionCheckResult};
+use crate::domain::{is_numeric_changelog_version, CheckFailure, CheckedFirmware, FirmwareInput, FirmwarePackage, OtaFields, UpdateAction, VersionCheckResult};
 
 pub(crate) mod fingerprint;
 mod honor;
@@ -42,10 +42,13 @@ impl DeviceCredentials {
 }
 
 fn remove_numeric_versions(packages: &mut Vec<FirmwarePackage>) {
-    packages.retain(|package| {
-        let version = package.version_number.trim();
-        version.len() != 9 || !version.bytes().all(|byte| byte.is_ascii_digit())
-    });
+    packages.retain(|package| !is_numeric_changelog_version(&package.version_number));
+}
+
+pub(crate) fn preload_fallback(preload: &str) -> Option<String> {
+    let (prefix, rest) = preload.split_once(' ')?;
+    let suffix = rest.trim_start().strip_prefix("104.2.0.")?;
+    Some(format!("{prefix} 104.0.0.{suffix}"))
 }
 
 pub(crate) fn filelist_url(raw: &str) -> Result<String> {
@@ -143,4 +146,25 @@ pub(crate) async fn query(
         };
     }
     Ok(CheckedFirmware { target, packages: result.packages, matches: result.matches })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preload_fallback;
+
+    #[test]
+    fn preload_fallback_rewrites_only_104_2_0_prefix() {
+        assert_eq!(
+            preload_fallback("ALT-L29-PRELOAD 104.2.0.1(C432R2)").as_deref(),
+            Some("ALT-L29-PRELOAD 104.0.0.1(C432R2)")
+        );
+        assert_eq!(
+            preload_fallback("TAS-AN00-PRELOAD  104.2.0.4(C00R5)").as_deref(),
+            Some("TAS-AN00-PRELOAD 104.0.0.4(C00R5)")
+        );
+        assert_eq!(preload_fallback("ALT-L29-PRELOAD 104.0.0.1(C432R2)"), None);
+        assert_eq!(preload_fallback("ALT-L29-PRELOAD 104.2.1.1(C432R2)"), None);
+        assert_eq!(preload_fallback("HBN-AL00-PRELOAD 104.3.0.1(C00R1)"), None);
+        assert_eq!(preload_fallback("NO_SPACE_104.2.0.1"), None);
+    }
 }

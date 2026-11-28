@@ -125,14 +125,35 @@ pub(crate) struct LegacyFirmware {
     pub(crate) packages: Vec<FirmwarePackage>,
 }
 
+pub(crate) fn is_numeric_changelog_version(version: &str) -> bool {
+    let version = version.trim();
+    version.len() == 9 && version.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 #[derive(Deserialize)]
 pub(crate) struct RefreshSeed {
     pub(crate) id: i64,
     pub(crate) dev: String,
     pub(crate) vendor: String,
-    pub(crate) action: UpdateAction,
-    pub(crate) lgrp: Option<String>,
+    pub(crate) lgrp: String,
     pub(crate) packages: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RefreshSeeds {
+    #[serde(default)]
+    pub(crate) seeds: Vec<RefreshSeed>,
+    #[serde(rename = "upgradeOnly", default)]
+    pub(crate) upgrade_only: usize,
+    #[serde(rename = "invalidRecovery", default)]
+    pub(crate) invalid_recovery: usize,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct InsertAttempt {
+    #[serde(default)]
+    pub(crate) legacy: Vec<LegacyFirmware>,
+    pub(crate) saved: Option<serde_json::Value>,
 }
 
 pub(crate) struct ModelSyncSummary {
