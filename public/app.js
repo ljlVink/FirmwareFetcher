@@ -428,7 +428,9 @@ $autoParse.addEventListener("input", () => {
   }
   // P 位 = PRELOAD 版本末位，R 位只进括号（真机证据：TAS 104.2.0.136(C00E136R7P4) → PRELOAD 104.0.0.4(C00R7)）。
   const [, series, model, lgrp, version, sp, region, custE, preloadR, preloadP, patch] = match;
-  const regionRule = REGION_RULES[region];
+  const regionRule = region.startsWith("ENT")
+    ? { vendor: "all_cn", baseSuffix: "ENT" }
+    : REGION_RULES[region];
   if (regionRule) {
     vendorBeforeAutoParse ??= $vendor.value;
     $vendor.value = regionRule.vendor;
